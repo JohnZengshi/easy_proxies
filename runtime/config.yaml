@@ -1,0 +1,32 @@
+mode: pool
+log_level: info
+
+log:
+  output: file
+  file: easy_proxies.log
+  max_size: 20
+  max_backups: 3
+  max_age: 7
+  compress: true
+
+skip_cert_verify: false
+
+listener:
+  address: "127.0.0.1"
+  port: 2323
+
+pool:
+  mode: latency
+  failure_threshold: 3
+  blacklist_duration: 24h
+  retry_enabled: true
+  retry_attempts: 3
+
+sticky:
+  enabled: false
+  port: 2324
+
+management:
+  listen: "127.0.0.1:9091"
+
+nodes_file: nodes.txt

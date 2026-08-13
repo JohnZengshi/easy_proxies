@@ -1,0 +1,18 @@
+bind: "127.0.0.1"
+base_port: 18081
+status_port: 18080
+state_file: "./runtime/proxypool-state.json"
+probe_urls:
+  - "https://api.ipify.org"
+  - "https://ifconfig.me/ip"
+probe_timeout: 10s
+health_interval: 20s
+refresh_interval: 6h
+dial_timeout: 10s
+max_concurrent_probe: 8
+log_requests: true
+log_format: text
+
+sources:
+  - tag: vpncheap
+    type: vpncheap

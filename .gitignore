@@ -44,3 +44,18 @@ coverage.html
 # AI tool artifacts
 .ace-tool/
 .codegraph/
+.omo/
+# Runtime local artifacts (binaries, secrets, dynamic node list)
+runtime/*.log
+runtime/*.pid
+runtime/nodes.txt
+runtime/proxypool
+runtime/easy_proxies
+runtime/proxypool-state.json
+runtime/node_ports.json
+
+# Keep trackable orchestration and config templates out of the ignore above.
+!runtime/proxy-chain.sh
+!runtime/proxy-chain.ps1
+!runtime/proxypool-config.yaml
+!runtime/config.yaml
