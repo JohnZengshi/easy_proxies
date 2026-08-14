@@ -468,6 +468,7 @@
         <button class="btn" id="refreshSubBtn" onclick="refreshSubscription()" style="display:none;">刷新订阅</button>
         <button class="btn" onclick="exportNodes()">导出配置</button>
         <button class="btn" onclick="exportNodes(true)">全部导出</button>
+        <button class="btn" onclick="exportNodes('9router')">9router 导出</button>
         <button class="btn" onclick="toggleAutoRefresh()" id="autoRefreshBtn">⏹ 关闭自动刷新</button>
         <button class="btn" onclick="refresh()">↺ 刷新</button>
       </div>
@@ -1352,13 +1353,17 @@
       }
     }
 
-    async function exportNodes(all=false) {
+    async function exportNodes(mode) {
       try {
-        const res = await fetch(all ? '/api/export?all=true' : '/api/export');
+        let query = '';
+        let filename = 'nodes.txt';
+        if(mode === 'all') { query = '?all=true'; filename = 'nodes_all.txt'; }
+        if(mode === '9router') { query = '?target=9router'; filename = 'nodes_9router.txt'; }
+        const res = await fetch('/api/export' + query);
         if(!res.ok) throw new Error();
         const blob = await res.blob();
         const url = window.URL.createObjectURL(blob);
-        const a = document.createElement('a'); a.href = url; a.download = all ? 'nodes_all.txt' : 'nodes.txt';
+        const a = document.createElement('a'); a.href = url; a.download = filename;
         document.body.appendChild(a); a.click(); document.body.removeChild(a); window.URL.revokeObjectURL(url);
       } catch(e) { showToast('导出失败', 'error');}
     }

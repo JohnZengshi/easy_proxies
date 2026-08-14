@@ -2,6 +2,7 @@ package config
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -475,27 +476,13 @@ func (c *Config) normalize() error {
 	// Log config defaults
 	c.normalizeLogConfig()
 
-	// Auto-fix port conflicts in hybrid mode (pool port vs multi-port)
+	// Reject internal port conflicts in hybrid mode. Reassigning a saved node
+	// port would silently break URLs already exported to 9router.
 	if c.Mode == "hybrid" {
 		poolPort := c.Listener.Port
-		usedPorts := make(map[uint16]bool)
-		usedPorts[poolPort] = true
-		for idx := range c.Nodes {
-			usedPorts[c.Nodes[idx].Port] = true
-		}
 		for idx := range c.Nodes {
 			if c.Nodes[idx].Port == poolPort {
-				// Find next available port
-				newPort := c.Nodes[idx].Port + 1
-				for usedPorts[newPort] || !IsPortAvailable(c.MultiPort.Address, newPort) {
-					newPort++
-					if newPort > 65535 {
-						return fmt.Errorf("no available port for node %q after conflict with pool port %d", c.Nodes[idx].Name, poolPort)
-					}
-				}
-				log.Printf("⚠️  Node %q port %d conflicts with pool port, reassigned to %d", c.Nodes[idx].Name, poolPort, newPort)
-				usedPorts[newPort] = true
-				c.Nodes[idx].Port = newPort
+				return fmt.Errorf("node %q port %d conflicts with hybrid listener port %d", c.Nodes[idx].Name, poolPort, poolPort)
 			}
 		}
 	}
@@ -735,6 +722,9 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 		if c.Mode == "multi-port" || c.Mode == "hybrid" {
 			nodeKey := c.Nodes[idx].NodeKey()
 			if existingPort, ok := portMap[nodeKey]; ok && existingPort > 0 {
+				if c.Mode == "hybrid" && existingPort == c.Listener.Port {
+					return fmt.Errorf("node %q preserved port %d conflicts with hybrid listener port %d", c.Nodes[idx].Name, existingPort, c.Listener.Port)
+				}
 				if usedPorts[existingPort] {
 					duplicatePortHits++
 				} else {
@@ -1585,6 +1575,9 @@ func buildAnyTLSURI(p clashProxy) string {
 	if p.ClientFingerprint != "" {
 		params.Set("fp", p.ClientFingerprint)
 	}
+	if len(p.ALPN) > 0 {
+		params.Set("alpn", strings.Join(p.ALPN, ","))
+	}
 
 	query := ""
 	if len(params) > 0 {
@@ -1801,6 +1794,12 @@ func writeNodesToFile(path string, nodes []NodeConfig) error {
 	return writeFileWithLock(path, []byte(content), 0o644)
 }
 
+// WriteNodesFile persists nodes using the same locked atomic writer used by
+// subscription refresh and config persistence.
+func WriteNodesFile(path string, nodes []NodeConfig) error {
+	return writeNodesToFile(path, nodes)
+}
+
 // SaveNodes persists nodes to their appropriate locations based on source.
 // - subscription/nodes_file nodes → nodes.txt (or configured nodes_file)
 // - inline nodes → config.yaml nodes array
@@ -1986,29 +1985,62 @@ func checkFileWritable(path string) error {
 	return nil
 }
 
-// writeFileWithLock writes data to a file with exclusive locking.
+// writeFileWithLock writes data through a same-directory temp file and replaces
+// the destination while holding an exclusive lock. A crash before replacement
+// leaves the previous complete file intact.
 func writeFileWithLock(path string, data []byte, perm os.FileMode) error {
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE|os.O_TRUNC, perm)
+	lockPath, err := lockFilePath(path)
 	if err != nil {
-		return fmt.Errorf("open file: %w", err)
+		return fmt.Errorf("lock path: %w", err)
 	}
-	defer f.Close()
+	lock, err := os.OpenFile(lockPath, os.O_RDWR|os.O_CREATE, 0o600)
+	if err != nil {
+		return fmt.Errorf("open lock: %w", err)
+	}
+	defer lock.Close()
 
-	// Acquire exclusive lock
-	if err := lockFile(f); err != nil {
+	if err := lockFile(lock); err != nil {
 		return fmt.Errorf("lock file: %w", err)
 	}
-	defer unlockFile(f)
+	defer unlockFile(lock)
 
-	// Write data
-	if _, err := f.Write(data); err != nil {
-		return fmt.Errorf("write file: %w", err)
+	tmp, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp: %w", err)
 	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
 
-	// Ensure data is written to disk
-	if err := f.Sync(); err != nil {
-		return fmt.Errorf("sync file: %w", err)
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write temp: %w", err)
 	}
-
+	if err := tmp.Chmod(perm); err != nil {
+		tmp.Close()
+		return fmt.Errorf("chmod temp: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("sync temp: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp: %w", err)
+	}
+	if err := atomicReplaceFile(tmpPath, path); err != nil {
+		return fmt.Errorf("replace file: %w", err)
+	}
 	return nil
+}
+
+func lockFilePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = filepath.Clean(path)
+	}
+	hash := sha256.Sum256([]byte(strings.ToLower(filepath.Clean(abs))))
+	dir := filepath.Join(os.TempDir(), "easy_proxies-locks")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, fmt.Sprintf("%x.lock", hash[:8])), nil
 }

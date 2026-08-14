@@ -1,6 +1,10 @@
 package config
 
-import "testing"
+import (
+	"net"
+	"strings"
+	"testing"
+)
 
 func TestStableNodeKey_IgnoresNameAndParamOrder(t *testing.T) {
 	tests := []struct {
@@ -115,5 +119,65 @@ func TestNormalizeWithPortMap_PreservesAcrossRefresh(t *testing.T) {
 			t.Fatalf("port collision detected: %d assigned twice", n.Port)
 		}
 		seen[n.Port] = true
+	}
+}
+
+func TestNormalizeWithPortMap_RejectsHybridPoolPortConflict(t *testing.T) {
+	const uri = "vless://uuid-a@a.example.com:443?type=ws&security=tls#NodeA"
+	cfg := &Config{
+		Mode:      "hybrid",
+		Listener:  ListenerConfig{Address: "127.0.0.1", Port: 2323},
+		MultiPort: MultiPortConfig{Address: "127.0.0.1", BasePort: 24000},
+		Nodes:     []NodeConfig{{URI: uri}},
+	}
+	portMap := map[string]uint16{stableNodeKey(uri): 2323}
+
+	err := cfg.NormalizeWithPortMap(portMap)
+	if err == nil || !strings.Contains(err.Error(), "conflicts with hybrid listener port") {
+		t.Fatalf("expected hybrid pool conflict error, got %v", err)
+	}
+	if cfg.Nodes[0].Port == 2323 {
+		t.Fatalf("node must not keep a port that conflicts with the hybrid listener")
+	}
+}
+
+func TestNormalize_RejectsHybridPoolPortConflict(t *testing.T) {
+	cfg := &Config{
+		Mode:      "hybrid",
+		Listener:  ListenerConfig{Address: "127.0.0.1", Port: 2323},
+		MultiPort: MultiPortConfig{Address: "127.0.0.1", BasePort: 24000},
+		Nodes: []NodeConfig{{
+			URI:  "vless://uuid-a@a.example.com:443?type=ws&security=tls#NodeA",
+			Port: 2323,
+		}},
+	}
+
+	err := cfg.normalize()
+	if err == nil || !strings.Contains(err.Error(), "conflicts with hybrid listener port") {
+		t.Fatalf("expected hybrid pool conflict error, got %v", err)
+	}
+}
+
+func TestNormalizeWithPortMap_PreservesSavedPortWhenExternalPortIsOccupied(t *testing.T) {
+	const uri = "vless://uuid-a@a.example.com:443?type=ws&security=tls#NodeA"
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("open conflict listener: %v", err)
+	}
+	defer listener.Close()
+	port := uint16(listener.Addr().(*net.TCPAddr).Port)
+
+	cfg := &Config{
+		Mode:      "multi-port",
+		MultiPort: MultiPortConfig{Address: "127.0.0.1", BasePort: 24000},
+		Nodes:     []NodeConfig{{URI: uri}},
+	}
+	portMap := map[string]uint16{stableNodeKey(uri): port}
+
+	if err := cfg.NormalizeWithPortMap(portMap); err != nil {
+		t.Fatalf("normalize with saved port: %v", err)
+	}
+	if cfg.Nodes[0].Port != port {
+		t.Fatalf("saved port changed from %d to %d; published URL must stay stable", port, cfg.Nodes[0].Port)
 	}
 }

@@ -858,24 +858,36 @@ func buildAnyTLSOptions(u *url.URL, skipCertVerify bool) (option.AnyTLSOutboundO
 		ServerOptions: option.ServerOptions{Server: server, ServerPort: uint16(port)},
 		Password:      password,
 	}
-
-	// Parse TLS options
-	if tlsOptions, err := buildTLSOptions(query, skipCertVerify); err != nil {
-		return option.AnyTLSOutboundOptions{}, err
-	} else if tlsOptions != nil {
-		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{TLS: tlsOptions}
-	} else {
-		// AnyTLS defaults to TLS enabled
-		opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{
-			TLS: &option.OutboundTLSOptions{
-				Enabled:    true,
-				ServerName: server,
-				Insecure:   skipCertVerify,
-			},
-		}
+	opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{
+		TLS: buildAnyTLSTLSOptions(server, query, skipCertVerify),
 	}
 
 	return opts, nil
+}
+
+func buildAnyTLSTLSOptions(server string, query url.Values, skipCertVerify bool) *option.OutboundTLSOptions {
+	tlsOptions := &option.OutboundTLSOptions{
+		Enabled:    true,
+		ServerName: server,
+		Insecure:   skipCertVerify,
+	}
+	if sni := query.Get("sni"); sni != "" {
+		tlsOptions.ServerName = sni
+	}
+	insecure := query.Get("allowInsecure")
+	if insecure == "" {
+		insecure = query.Get("insecure")
+	}
+	if insecure != "" {
+		tlsOptions.Insecure = insecure == "1" || strings.EqualFold(insecure, "true")
+	}
+	if alpn := query.Get("alpn"); alpn != "" {
+		tlsOptions.ALPN = badoption.Listable[string](strings.Split(alpn, ","))
+	}
+	if fp := query.Get("fp"); fp != "" {
+		tlsOptions.UTLS = &option.OutboundUTLSOptions{Enabled: true, Fingerprint: fp}
+	}
+	return tlsOptions
 }
 
 func buildTUICOptions(u *url.URL, skipCertVerify bool) (option.TUICOutboundOptions, error) {

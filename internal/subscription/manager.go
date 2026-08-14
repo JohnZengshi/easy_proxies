@@ -404,15 +404,7 @@ func (m *Manager) getNodesFilePath() string {
 
 // writeNodesToFile writes nodes to a file (one URI per line).
 func (m *Manager) writeNodesToFile(path string, nodes []config.NodeConfig) error {
-	var lines []string
-	for _, node := range nodes {
-		lines = append(lines, node.URI)
-	}
-	content := strings.Join(lines, "\n")
-	if len(lines) > 0 {
-		content += "\n"
-	}
-	return os.WriteFile(path, []byte(content), 0o644)
+	return config.WriteNodesFile(path, nodes)
 }
 
 // computeNodesHash computes a hash of node URIs for change detection.

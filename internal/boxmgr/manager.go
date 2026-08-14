@@ -114,8 +114,12 @@ func (m *Manager) Start(ctx context.Context) error {
 	cfg := m.cfg
 	m.mu.Unlock()
 
-	// Try to start, with automatic port conflict resolution
+	// Retry the same ports on transient bind conflicts, but never reassign a
+	// node port: exported URLs must stay stable. The operator must free a
+	// persistently occupied port and retry.
 	var instance *box.Box
+	var lastStartErr error
+	started := false
 	maxRetries := 10
 	for retry := 0; retry < maxRetries; retry++ {
 		var err error
@@ -123,19 +127,23 @@ func (m *Manager) Start(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err = instance.Start(); err != nil {
-			_ = instance.Close()
-			// Check if it's a port conflict error
-			if conflictPort := extractPortFromBindError(err); conflictPort > 0 {
-				m.logger.Warnf("port %d is in use, reassigning and retrying...", conflictPort)
-				if reassigned := reassignConflictingPort(cfg, conflictPort); reassigned {
-					pool.ResetSharedStateStore() // Reset shared state for rebuild
-					continue
-				}
-			}
+		if err = instance.Start(); err == nil {
+			started = true
+			break
+		}
+		_ = instance.Close()
+		instance = nil
+		lastStartErr = err
+
+		conflictPort := extractPortFromBindError(err)
+		if conflictPort == 0 {
 			return fmt.Errorf("start sing-box: %w", err)
 		}
-		break // Success
+		m.logger.Warnf("port %d still in use on start attempt %d/%d, waiting for release and retrying...", conflictPort, retry+1, maxRetries)
+		time.Sleep(300 * time.Millisecond)
+	}
+	if !started {
+		return fmt.Errorf("start sing-box: port still in use after %d attempts: %w", maxRetries, lastStartErr)
 	}
 
 	m.mu.Lock()
@@ -231,10 +239,8 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 	// were just closed and the OS has not yet released them. The fixed sleep
 	// above is a best-effort head start, not a guarantee. So on "address already
 	// in use" we WAIT and retry the SAME ports, keeping every preserved port
-	// stable across the refresh. Reassigning a node to a fresh port is a
-	// last-resort escape hatch (only once we've waited through several attempts):
-	// moving a port silently breaks clients pointed at the old one and is exactly
-	// the failure this guards against.
+	// stable across the refresh. We never reassign a node to a fresh port:
+	// moving a port silently breaks clients and already exported 9router URLs.
 	var instance *box.Box
 	started := false
 	var lastStartErr error
@@ -265,16 +271,6 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		m.logger.Warnf("port %d still in use on start attempt %d/%d, waiting for release and retrying...", conflictPort, retry+1, maxRetries)
 		time.Sleep(300 * time.Millisecond)
 
-		// Only after we've waited through the first half of our attempts do we
-		// treat the conflict as persistent (some other process owns the port)
-		// and reassign the offending node. The listener port cannot be
-		// reassigned this way; if it is the conflict we simply keep waiting.
-		if retry >= maxRetries/2 {
-			if reassignConflictingPort(newCfg, conflictPort) {
-				m.logger.Warnf("port %d persistently in use; reassigned the affected node to a fresh port", conflictPort)
-				pool.ResetSharedStateStore()
-			}
-		}
 	}
 
 	if !started {
@@ -541,7 +537,7 @@ func (m *Manager) createBox(ctx context.Context, cfg *config.Config) (*box.Box, 
 				if poolOpts, ok := ob.Options.(*pool.Options); ok {
 					poolOpts.Members = removeFromSlice(poolOpts.Members, badTag)
 					delete(poolOpts.Metadata, badTag)
-					
+
 					// If the pool is now empty, remove it to avoid another validation error
 					if len(poolOpts.Members) == 0 {
 						log.Printf("⚠️  Removing empty pool '%s'", ob.Tag)
@@ -951,42 +947,6 @@ func extractPortFromBindError(err error) uint16 {
 		return uint16(port)
 	}
 	return 0
-}
-
-
-// reassignConflictingPort finds the node using the conflicting port and assigns a new port.
-func reassignConflictingPort(cfg *config.Config, conflictPort uint16) bool {
-	// Build set of used ports
-	usedPorts := make(map[uint16]bool)
-	if cfg.Mode == "hybrid" {
-		usedPorts[cfg.Listener.Port] = true
-	}
-	for _, node := range cfg.Nodes {
-		usedPorts[node.Port] = true
-	}
-
-	// Find and reassign the conflicting node
-	for idx := range cfg.Nodes {
-		if cfg.Nodes[idx].Port == conflictPort {
-			// Find next available port
-			newPort := conflictPort + 1
-			address := cfg.MultiPort.Address
-			if address == "" {
-				address = "0.0.0.0"
-			}
-			for usedPorts[newPort] || !config.IsPortAvailable(address, newPort) {
-				newPort++
-				if newPort > 65535 {
-					log.Printf("❌ No available port found for node %q", cfg.Nodes[idx].Name)
-					return false
-				}
-			}
-			log.Printf("⚠️  Port %d in use, reassigning node %q to port %d", conflictPort, cfg.Nodes[idx].Name, newPort)
-			cfg.Nodes[idx].Port = newPort
-			return true
-		}
-	}
-	return false
 }
 
 func cloneNodes(nodes []config.NodeConfig) []config.NodeConfig {

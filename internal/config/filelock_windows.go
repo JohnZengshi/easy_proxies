@@ -36,3 +36,7 @@ func unlockFile(f *os.File) error {
 		&ol,
 	)
 }
+
+func atomicReplaceFile(oldPath, newPath string) error {
+	return windows.Rename(oldPath, newPath)
+}

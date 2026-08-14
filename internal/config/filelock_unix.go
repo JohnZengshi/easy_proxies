@@ -16,3 +16,7 @@ func lockFile(f *os.File) error {
 func unlockFile(f *os.File) error {
 	return unix.Flock(int(f.Fd()), unix.LOCK_UN)
 }
+
+func atomicReplaceFile(oldPath, newPath string) error {
+	return os.Rename(oldPath, newPath)
+}

@@ -1,30 +1,45 @@
+[CmdletBinding()]
 param(
-    [ValidateSet('start','stop','restart','status')]
-    [string]$Action = 'status'
+    [ValidateSet('start', 'stop', 'restart', 'status')]
+    [string]$Action = 'status',
+
+    [switch]$Legacy,
+
+    [string]$ResolverScript = '',
+    [string]$ResolverStatePath = '',
+    [string]$EasyProxiesBin = '',
+    [string]$EasyProxiesArgumentPrefix = '',
+    [int]$WebUiPort = 9091,
+    [switch]$SkipLogRedirect
 )
 
 $ErrorActionPreference = 'Stop'
-$Root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
-$Runtime = $PSScriptRoot
+$Runtime = if ($PSScriptRoot) { $PSScriptRoot } else { Split-Path -Parent $MyInvocation.MyCommand.Path }
+if (-not $ResolverScript) {
+    $ResolverScript = Join-Path $Runtime 'sync-vpncheap-subscription.ps1'
+}
 $PPCfg = Join-Path $Runtime 'proxypool-config.yaml'
 $EPCfg = Join-Path $Runtime 'config.yaml'
+$EPEasyCfg = Join-Path $Runtime 'easy_proxies-config.yaml'
 $PPBin = if (Test-Path (Join-Path $Runtime 'proxypool.exe')) { Join-Path $Runtime 'proxypool.exe' } else { Join-Path $Runtime 'proxypool' }
-$EPBin = if (Test-Path (Join-Path $Runtime 'easy_proxies.exe')) { Join-Path $Runtime 'easy_proxies.exe' } else { Join-Path $Runtime 'easy_proxies' }
+$EPBin = if (-not [string]::IsNullOrWhiteSpace($EasyProxiesBin)) {
+    $EasyProxiesBin
+} elseif (Test-Path (Join-Path $Runtime 'easy_proxies.exe')) {
+    Join-Path $Runtime 'easy_proxies.exe'
+} else {
+    Join-Path $Runtime 'easy_proxies'
+}
 $PPId = Join-Path $Runtime 'proxypool.pid'
 $EPId = Join-Path $Runtime 'easy_proxies.pid'
 $Nodes = Join-Path $Runtime 'nodes.txt'
 $PPLog = Join-Path $Runtime 'proxypool.log'
+$PPErrLog = Join-Path $Runtime 'proxypool.err.log'
 $EPLog = Join-Path $Runtime 'easy_proxies.log'
+$EPErrLog = Join-Path $Runtime 'easy_proxies.err.log'
 $StatusPort = 18080
-$WebUiPort = 9091
 
 function Write-Log([string]$Message) {
     Write-Host "[proxy-chain] $Message"
-}
-
-function Test-PortFree([int]$Port) {
-    $conn = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-    return -not [bool]$conn
 }
 
 function Test-ProxypoolHealthy {
@@ -45,6 +60,15 @@ function Test-HasVpnCheapNodes {
     }
 }
 
+function Test-EasyProxiesHealthy {
+    try {
+        $response = Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$WebUiPort/" -TimeoutSec 2
+        return ($response.StatusCode -eq 200)
+    } catch {
+        return $false
+    }
+}
+
 function Read-Pid([string]$Path) {
     if (Test-Path $Path) {
         $raw = Get-Content $Path -Raw
@@ -53,9 +77,14 @@ function Read-Pid([string]$Path) {
     return 0
 }
 
-function Test-PidAlive([int]$Pid) {
-    if ($Pid -le 0) { return $false }
-    try { Get-Process -Id $Pid -ErrorAction Stop | Out-Null; return $true } catch { return $false }
+function Test-PidAlive([int]$ProcessId) {
+    if ($ProcessId -le 0) { return $false }
+    try {
+        Get-Process -Id $ProcessId -ErrorAction Stop | Out-Null
+        return $true
+    } catch {
+        return $false
+    }
 }
 
 function Start-Proxypool {
@@ -65,10 +94,13 @@ function Start-Proxypool {
     }
     if (-not (Test-Path $PPBin)) { throw "proxypool binary missing: $PPBin" }
     Write-Log 'starting proxypool'
-    $proc = Start-Process -FilePath $PPBin -ArgumentList '-config', $PPCfg -RedirectStandardOutput $PPLog -RedirectStandardError $PPLog -WindowStyle Hidden -PassThru
+    $proc = Start-Process -FilePath $PPBin -ArgumentList '-config', $PPCfg -RedirectStandardOutput $PPLog -RedirectStandardError $PPErrLog -WindowStyle Hidden -PassThru
     Set-Content -Path $PPId -Value $proc.Id
     for ($i = 0; $i -lt 30; $i++) {
-        if (Test-ProxypoolHealthy) { Write-Log 'proxypool healthy'; return }
+        if (Test-ProxypoolHealthy) {
+            Write-Log 'proxypool healthy'
+            return
+        }
         Start-Sleep -Seconds 2
     }
     throw "proxypool did not become healthy; tail $PPLog"
@@ -86,44 +118,102 @@ function Update-NodesFile {
 }
 
 function Start-EasyProxies {
-    $pid = Read-Pid $EPId
-    if (Test-PidAlive $pid) { Write-Log 'easy_proxies already running'; return }
-    if (-not (Test-Path $EPBin)) { throw "easy_proxies binary missing: $EPBin" }
-    Write-Log 'starting easy_proxies'
-    $proc = Start-Process -FilePath $EPBin -ArgumentList '-config', $EPCfg -RedirectStandardOutput $EPLog -RedirectStandardError $EPLog -WindowStyle Hidden -PassThru
-    Set-Content -Path $EPId -Value $proc.Id
-    for ($i = 0; $i -lt 20; $i++) {
-        try {
-            Invoke-WebRequest -UseBasicParsing -Uri "http://127.0.0.1:$WebUiPort/" -TimeoutSec 2 | Out-Null
-            Write-Log "easy_proxies ready on $WebUiPort"
-            return
-        } catch {}
-        Start-Sleep -Seconds 2
+    param([string]$ConfigPath)
+
+    $procId = Read-Pid $EPId
+    if (Test-PidAlive $procId) {
+        Write-Log 'easy_proxies already running'
+        return
     }
-    throw "easy_proxies did not become ready; tail $EPLog"
+    if (-not (Test-Path $EPBin)) { throw "easy_proxies binary missing: $EPBin" }
+    if (-not (Test-Path $ConfigPath)) { throw "easy_proxies config missing: $ConfigPath" }
+
+    Write-Log 'starting easy_proxies'
+    $argumentList = @()
+    if ($EasyProxiesArgumentPrefix) {
+        $argumentList += @($EasyProxiesArgumentPrefix -split '\s+')
+    }
+    $argumentList += @('-config', $ConfigPath)
+    $startParams = @{
+        FilePath = $EPBin
+        ArgumentList = $argumentList
+        WindowStyle = 'Hidden'
+        PassThru = $true
+    }
+    if (-not $SkipLogRedirect) {
+        $startParams.RedirectStandardOutput = $EPLog
+        $startParams.RedirectStandardError = $EPErrLog
+    }
+    $proc = Start-Process @startParams
+    Set-Content -Path $EPId -Value $proc.Id
+    if ($WebUiPort -gt 0) {
+        for ($i = 0; $i -lt 20; $i++) {
+            if (Test-EasyProxiesHealthy) {
+                Write-Log "easy_proxies ready on $WebUiPort"
+                return
+            }
+            Start-Sleep -Seconds 2
+        }
+        throw "easy_proxies did not become ready; tail $EPLog"
+    } else {
+        Write-Log 'started easy_proxies without readiness check'
+    }
 }
 
 function Stop-EasyProxies {
-    $pid = Read-Pid $EPId
-    if (Test-PidAlive $pid) {
-        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    $procId = Read-Pid $EPId
+    if (Test-PidAlive $procId) {
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
         Write-Log 'stopped easy_proxies'
     }
 }
 
 function Stop-Proxypool {
-    $pid = Read-Pid $PPId
-    if (Test-PidAlive $pid) {
-        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+    $procId = Read-Pid $PPId
+    if (Test-PidAlive $procId) {
+        Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
         Write-Log 'stopped proxypool'
     }
 }
 
+function Start-Direct {
+    Stop-Proxypool
+    Stop-EasyProxies
+
+    if (-not (Test-Path $ResolverScript)) { throw "subscription resolver missing: $ResolverScript" }
+    try {
+        if ($ResolverStatePath) {
+            & $ResolverScript -StatePath $ResolverStatePath -OutputPath $EPEasyCfg
+        } else {
+            & $ResolverScript -OutputPath $EPEasyCfg
+        }
+        if ($LASTEXITCODE -ne 0) { throw 'failed to regenerate VPNCheap direct config' }
+    } catch {
+        Remove-Item -LiteralPath $EPEasyCfg -Force -ErrorAction SilentlyContinue
+        throw
+    }
+    if (-not (Test-Path $EPEasyCfg)) { throw 'subscription resolver did not create direct config' }
+
+    Start-EasyProxies -ConfigPath $EPEasyCfg
+    Write-Log 'direct mode: proxypool stopped, port 18080 not used'
+    if ($WebUiPort -gt 0) {
+        Write-Log "9router export http://127.0.0.1:$WebUiPort/api/export?target=9router"
+    }
+}
+
+function Start-Legacy {
+    Start-Proxypool
+    Update-NodesFile
+    Start-EasyProxies -ConfigPath $EPCfg
+}
+
 switch ($Action) {
     'start' {
-        Start-Proxypool
-        Update-NodesFile
-        Start-EasyProxies
+        if ($Legacy) {
+            Start-Legacy
+        } else {
+            Start-Direct
+        }
         Write-Log "HTTP  http://127.0.0.1:2323"
         Write-Log "SOCKS socks5://127.0.0.1:2323"
     }
@@ -133,15 +223,27 @@ switch ($Action) {
     }
     'restart' {
         & $PSCommandPath stop
-        & $PSCommandPath start
+        if ($Legacy) {
+            & $PSCommandPath start -Legacy
+        } else {
+            & $PSCommandPath start
+        }
     }
     'status' {
-        $pp = Read-Pid $PPId
         $ep = Read-Pid $EPId
-        if ((Test-PidAlive $ep) -or (Test-ProxypoolHealthy)) {
-            Write-Log "running (proxypool health=$StatusPort easy_proxies_pid=$ep)"
+        if ($Legacy) {
+            $pp = Read-Pid $PPId
+            if ((Test-PidAlive $ep) -or (Test-PidAlive $pp) -or (Test-ProxypoolHealthy)) {
+                Write-Log "running (legacy proxypool health=$StatusPort easy_proxies_pid=$ep)"
+            } else {
+                Write-Log 'stopped'
+            }
         } else {
-            Write-Log 'stopped'
+            if ((Test-PidAlive $ep) -or (Test-EasyProxiesHealthy)) {
+                Write-Log "running (easy_proxies_pid=$ep)"
+            } else {
+                Write-Log 'stopped'
+            }
         }
     }
 }

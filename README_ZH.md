@@ -56,6 +56,56 @@ docker compose up -d
 go run ./cmd/easy_proxies -config config.yaml
 ```
 
+### 3）Windows 直连 VPNCheap（本机推荐）
+
+本模式只启动 `easy_proxies`，不启动 `proxypool`，也不监听 `18080`。启动脚本会从本机 VPNCheap 状态文件自动读取订阅地址，生成受保护的 `runtime/easy_proxies-config.yaml`，然后以 `hybrid` 模式运行：`127.0.0.1:2323` 为无认证代理池入口，每个节点还有稳定的独立 HTTP 端口（默认从 `24000` 起），`127.0.0.1:9091` 为 WebUI/API。
+
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 start
+powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 status
+powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 stop
+```
+
+要求与限制：
+
+- VPNCheap Windows 客户端已在本机登录，状态文件位于 `%APPDATA%\vpncheap\app_state.json`。
+- `runtime\easy_proxies-config.yaml` 自动生成且已被 Git 忽略，不要手动提交或复制其中的订阅地址。
+- 订阅地址缺失、非法或读取失败时，`start` 会失败退出，不会回退到 `proxypool`。
+- 所有代理监听仅绑定 `127.0.0.1` 且不启用用户名密码；如需远程使用，先改监听地址并加认证，不要直接暴露公网。
+- macOS 的自动订阅发现暂未实现；当前脚本为 Windows 专用。
+- 如需保留旧 `proxypool` 链路，可显式运行 `powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 start -Legacy`。
+
+#### 导出到 9router
+
+9router 的代理池按每行一个代理地址导入。使用 WebUI 的 `9router 导出` 按钮，或直接下载：
+
+```text
+http://127.0.0.1:9091/api/export?target=9router
+```
+
+导出内容只包含当前运行节点的 HTTP 地址，每行一个，例如：
+
+```text
+http://127.0.0.1:24000
+http://127.0.0.1:24001
+http://127.0.0.1:24002
+```
+
+该导出包含全部已建立本地监听的节点，不按健康状态过滤；不带用户名密码，也不包含注释、池入口、GeoIP 入口或 SOCKS 地址。把导出内容复制后，在 9router 的 Proxy Pools 中批量导入即可。
+
+此方式要求 9router 与 easy_proxies 位于同一主机的网络命名空间。当前节点地址只绑定 `127.0.0.1`，Docker 容器或其他机器不能直接使用这些地址。
+
+#### 验证
+
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\tests\sync-vpncheap-subscription.Tests.ps1
+powershell -ExecutionPolicy Bypass -File runtime\tests\proxy-chain.Tests.ps1
+powershell -ExecutionPolicy Bypass -File runtime\tests\e2e.Tests.ps1
+go test -race ./internal/config ./internal/subscription
+```
+
+e2e 测试会使用临时端口启动本地 mock 上游，验证代理池与独立节点端口可用、9router 导出格式正确、重启后端口保持，以及代理池停止后 strict 客户端不会直连到目标。
+
 ## 最小配置示例（Pool）
 
 ```yaml
@@ -141,7 +191,7 @@ dns:
   - 订阅更新时会保留内联节点，不会覆盖
   - 节点顺序：内联节点在前，订阅节点在后
   - 各节点的来源标识（inline/subscription）会在管理界面中显示
-- **端口稳定**（multi-port/hybrid）：节点按 URI 稳定标识（忽略名称与参数顺序），订阅改名或重排都保持同一本地端口；分配结果保存到 config.yaml 同目录的 `node_ports.json`，重启后自动恢复。删除该文件可强制重新分配。
+- **端口稳定**（multi-port/hybrid）：节点按 URI 稳定标识（忽略名称与参数顺序），订阅改名或重排都保持同一本地端口；分配结果保存到 config.yaml 同目录的 `node_ports.json`，重启后自动恢复。外部进程占用已发布端口时启动/重载会报错，不会偷偷改端口；请释放冲突端口后重试。删除该文件可强制重新分配。
 
 ## 协议支持注意事项
 
@@ -171,6 +221,7 @@ dns:
 - `POST /api/nodes/{tag}/blacklist`
 - `POST /api/nodes/probe-all`（SSE）
 - `GET /api/export`
+- `GET /api/export?target=9router`（9router 批量导入格式，全量节点、每行一个 HTTP 地址）
 - `GET|PUT /api/subscription/config`
 - `GET|POST /api/subscription/status|refresh`
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`

@@ -718,6 +718,17 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	target := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
+	if target != "" && target != "9router" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "invalid target, use 9router"})
+		return
+	}
+	if target == "9router" {
+		s.handleNineRouterExport(w, r)
+		return
+	}
+
 	scheme := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("scheme")))
 	if scheme == "" {
 		scheme = "http"
@@ -873,6 +884,30 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 		filename = "full_" + filename
 	}
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filename))
+	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
+}
+
+// handleNineRouterExport emits one no-auth HTTP URI per active node for
+// 9router batch import. 9router rejects any invalid line, so comments, pool
+// entries, GeoIP entries, SOCKS variants, credentials, and duplicates are
+// deliberately absent.
+func (s *Server) handleNineRouterExport(w http.ResponseWriter, r *http.Request) {
+	var lines []string
+	seen := make(map[uint16]bool)
+	for _, snap := range s.mgr.Snapshot() {
+		if snap.Port == 0 || seen[snap.Port] {
+			continue
+		}
+		addr := snap.ListenAddress
+		if addr == "" || addr == "0.0.0.0" || addr == "::" {
+			addr = "127.0.0.1"
+		}
+		seen[snap.Port] = true
+		lines = append(lines, fmt.Sprintf("http://%s:%d", addr, snap.Port))
+	}
+
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename=9router_proxies.txt")
 	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
 }
 
