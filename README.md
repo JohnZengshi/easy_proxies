@@ -62,6 +62,39 @@ go run ./cmd/easy_proxies --config config.yaml
 
 Open `http://localhost:9091` in your browser.
 
+### 5. VPNCheap Direct Startup (Windows / macOS)
+
+This mode starts only `easy_proxies`, never `proxypool`, and never listens on `18080`. The launcher reads the installed VPNCheap client state, writes an owner-only `runtime/easy_proxies-config.yaml`, and runs in `hybrid` mode: `127.0.0.1:2323` for the proxy pool, stable per-node ports from `24000`, and `127.0.0.1:9091` for the WebUI/API.
+
+Windows:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 start
+powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 status
+powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 stop
+```
+
+macOS:
+
+```bash
+make build
+make run
+make restart
+make status
+make stop
+make package
+```
+
+Requirements:
+
+- The VPNCheap client must be installed and logged in on the same machine.
+- Windows state: `%APPDATA%\vpncheap\app_state.json`.
+- macOS state: `~/Library/Containers/com.vpncheap.macnative/Data/Library/Preferences/com.vpncheap.macnative.plist`.
+- `runtime/easy_proxies-config.yaml` is generated locally, protected from other users, Git-ignored, and must not be copied or committed.
+- Start fails when subscription discovery fails; it never falls back to `proxypool`.
+- All listeners bind to `127.0.0.1` with no proxy authentication. Do not expose them to the public network.
+- On macOS, `make build`, `make run`, and `make package` do not depend on `proxypool`. Linux keeps its existing launcher; Windows keeps the `-Legacy` compatibility path.
+
 ## Configuration
 
 ### Runtime Modes

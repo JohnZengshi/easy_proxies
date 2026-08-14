@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **macOS 直连 VPNCheap**: 新增从 VPNCheap macOS plist 读取订阅地址的解析器与直连启动脚本；`GOOS=darwin` 下 `make build`、`make run`、`make package`、`make test` 不再依赖 `proxypool`。Linux 与 Windows 行为保持不变。
 - **Stable per-node ports**: in `multi-port`/`hybrid` mode, each node keeps the same local port across subscription refreshes and process restarts
   - Ports are preserved by a stable node identity derived from the URI (ignoring the display name and query-parameter order), so renamed or reordered subscription nodes keep their port
   - Assignments are persisted to `node_ports.json` next to `config.yaml` and restored on startup

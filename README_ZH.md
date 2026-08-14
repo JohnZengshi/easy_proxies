@@ -56,9 +56,11 @@ docker compose up -d
 go run ./cmd/easy_proxies -config config.yaml
 ```
 
-### 3）Windows 直连 VPNCheap（本机推荐）
+### 3）本机直连 VPNCheap（Windows / macOS 推荐）
 
 本模式只启动 `easy_proxies`，不启动 `proxypool`，也不监听 `18080`。启动脚本会从本机 VPNCheap 状态文件自动读取订阅地址，生成受保护的 `runtime/easy_proxies-config.yaml`，然后以 `hybrid` 模式运行：`127.0.0.1:2323` 为无认证代理池入口，每个节点还有稳定的独立 HTTP 端口（默认从 `24000` 起），`127.0.0.1:9091` 为 WebUI/API。
+
+#### Windows
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 start
@@ -66,13 +68,24 @@ powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 status
 powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 stop
 ```
 
-要求与限制：
+#### macOS
+
+```bash
+make build
+make run
+make restart
+make status
+make stop
+make package
+```
 
 - VPNCheap Windows 客户端已在本机登录，状态文件位于 `%APPDATA%\vpncheap\app_state.json`。
+- VPNCheap macOS 客户端已在本机登录，订阅地址来自 `~/Library/Containers/com.vpncheap.macnative/Data/Library/Preferences/com.vpncheap.macnative.plist`。
 - `runtime\easy_proxies-config.yaml` 自动生成且已被 Git 忽略，不要手动提交或复制其中的订阅地址。
+- macOS 生成文件权限为仅当前用户可读写，且同样不会提交或打印订阅地址。
 - 订阅地址缺失、非法或读取失败时，`start` 会失败退出，不会回退到 `proxypool`。
 - 所有代理监听仅绑定 `127.0.0.1` 且不启用用户名密码；如需远程使用，先改监听地址并加认证，不要直接暴露公网。
-- macOS 的自动订阅发现暂未实现；当前脚本为 Windows 专用。
+- macOS 的 `make build`、`make run`、`make package` 不再依赖 `proxypool`；Linux 保持原启动方式，Windows `-Legacy` 兼容路径仍保留。
 - 如需保留旧 `proxypool` 链路，可显式运行 `powershell -ExecutionPolicy Bypass -File runtime\proxy-chain.ps1 start -Legacy`。
 
 #### 导出到 9router
@@ -101,6 +114,14 @@ http://127.0.0.1:24002
 powershell -ExecutionPolicy Bypass -File runtime\tests\sync-vpncheap-subscription.Tests.ps1
 powershell -ExecutionPolicy Bypass -File runtime\tests\proxy-chain.Tests.ps1
 powershell -ExecutionPolicy Bypass -File runtime\tests\e2e.Tests.ps1
+go test -race ./internal/config ./internal/subscription
+```
+
+macOS：
+
+```bash
+bash runtime/tests/sync-vpncheap-subscription.sh
+bash runtime/tests/proxy-chain-macos.sh
 go test -race ./internal/config ./internal/subscription
 ```
 
