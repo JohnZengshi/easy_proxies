@@ -69,6 +69,7 @@ type Snapshot struct {
 }
 
 type probeFunc func(ctx context.Context) (time.Duration, error)
+type domainProbeFunc func(ctx context.Context, domain string) (time.Duration, error)
 type releaseFunc func()
 
 type EntryHandle struct {
@@ -88,6 +89,7 @@ type entry struct {
 	lastProbe        time.Duration
 	active           atomic.Int32
 	probe            probeFunc
+	probeDomain      domainProbeFunc
 	release          releaseFunc
 	blacklistFn      func(time.Duration)
 	initialCheckDone bool
@@ -614,6 +616,37 @@ func (m *Manager) Probe(ctx context.Context, tag string) (time.Duration, error) 
 	return latency, nil
 }
 
+// TestDomain probes a specified domain through a node without changing the
+// node's available state. The pool probe still records metrics on the shared
+// entry, matching the behavior of the WebUI's per-node latency tests.
+func (m *Manager) TestDomain(ctx context.Context, tag, domain string) (time.Duration, error) {
+	e, err := m.entry(tag)
+	if err != nil {
+		return 0, err
+	}
+	e.mu.RLock()
+	fn := e.probeDomain
+	e.mu.RUnlock()
+	if fn == nil {
+		return 0, errors.New("domain probe not available for node")
+	}
+	type probeOutcome struct {
+		latency time.Duration
+		err     error
+	}
+	resCh := make(chan probeOutcome, 1)
+	go func() {
+		latency, err := fn(ctx, domain)
+		resCh <- probeOutcome{latency: latency, err: err}
+	}()
+	select {
+	case out := <-resCh:
+		return out.latency, out.err
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+}
+
 // Release clears blacklist state for the given node.
 func (m *Manager) Release(tag string) error {
 	e, err := m.entry(tag)
@@ -834,6 +867,17 @@ func (h *EntryHandle) SetProbe(fn func(ctx context.Context) (time.Duration, erro
 		return
 	}
 	h.ref.setProbe(fn)
+}
+
+// SetProbeDomain assigns a closure that probes an arbitrary domain through
+// this node for the WebUI latency-test API.
+func (h *EntryHandle) SetProbeDomain(fn func(ctx context.Context, domain string) (time.Duration, error)) {
+	if h == nil || h.ref == nil {
+		return
+	}
+	h.ref.mu.Lock()
+	h.ref.probeDomain = fn
+	h.ref.mu.Unlock()
 }
 
 // SetRelease assigns a release function.

@@ -159,6 +159,7 @@ func newPool(ctx context.Context, _ adapter.Router, logger singlog.ContextLogger
 				if probeFn := p.makeProbeByTagFunc(memberTag); probeFn != nil {
 					entry.SetProbe(probeFn)
 				}
+				entry.SetProbeDomain(p.makeProbeDomainByTagFunc(memberTag))
 			} else {
 				logger.Warn("failed to register node: ", memberTag)
 			}
@@ -265,6 +266,7 @@ func (p *poolOutbound) initializeMembersLocked() error {
 				if probe := p.makeProbeFunc(member); probe != nil {
 					entry.SetProbe(probe)
 				}
+				entry.SetProbeDomain(p.makeProbeDomainByTagFunc(member.tag))
 			}
 		}
 		members = append(members, member)
@@ -812,6 +814,37 @@ func (p *poolOutbound) makeProbeByTagFunc(tag string) func(ctx context.Context) 
 			return 0, E.New("member not found: ", tag)
 		}
 		return p.probeMember(ctx, member, destination, host, useTLS)
+	}
+}
+
+// makeProbeDomainByTagFunc returns a probe closure that connects through the
+// named member to an arbitrary HTTPS host. It is used by the WebUI latency test
+// for domains that are not the configured management probe target.
+func (p *poolOutbound) makeProbeDomainByTagFunc(tag string) func(ctx context.Context, domain string) (time.Duration, error) {
+	return func(ctx context.Context, domain string) (time.Duration, error) {
+		if strings.TrimSpace(domain) == "" {
+			return 0, E.New("empty domain")
+		}
+		p.mu.Lock()
+		if len(p.members) == 0 {
+			if err := p.initializeMembersLocked(); err != nil {
+				p.mu.Unlock()
+				return 0, err
+			}
+		}
+		var member *memberState
+		for _, m := range p.members {
+			if m.tag == tag {
+				member = m
+				break
+			}
+		}
+		p.mu.Unlock()
+		if member == nil {
+			return 0, E.New("member not found: ", tag)
+		}
+		destination := M.ParseSocksaddrHostPort(domain, 443)
+		return p.probeMember(ctx, member, destination, domain, true)
 	}
 }
 

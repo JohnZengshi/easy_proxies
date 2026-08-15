@@ -32,6 +32,7 @@ type Config struct {
 	Management          ManagementConfig          `yaml:"management"`
 	SubscriptionRefresh SubscriptionRefreshConfig `yaml:"subscription_refresh"`
 	GeoIP               GeoIPConfig               `yaml:"geoip"`
+	Routing             RoutingConfig             `yaml:"routing"`
 	Log                 LogConfig                 `yaml:"log"`
 	Nodes               []NodeConfig              `yaml:"nodes"`
 	NodesFile           string                    `yaml:"nodes_file"`    // 节点文件路径，每行一个 URI
@@ -61,6 +62,31 @@ type GeoIPConfig struct {
 	Port               uint16        `yaml:"port"`                 // GeoIP 路由监听端口，默认 1221
 	AutoUpdateEnabled  bool          `yaml:"auto_update_enabled"`  // 是否启用自动更新数据库
 	AutoUpdateInterval time.Duration `yaml:"auto_update_interval"` // 自动更新间隔，默认 24 小时
+}
+
+// RoutingConfig controls domain-based routing: per-domain node rules and the
+// china-direct shortcut used when system proxy mode is enabled.
+type RoutingConfig struct {
+	Rules []RoutingRule `yaml:"rules"`
+	// ChinaDirectEnabled defaults to true when unset. When enabled, domains
+	// from the embedded china ruleset bypass all proxy nodes.
+	ChinaDirectEnabled *bool `yaml:"china_direct_enabled,omitempty"`
+}
+
+// ChinaDirect reports whether china-direct routing is enabled, using the
+// safe default when the YAML field is absent.
+func (r RoutingConfig) ChinaDirect() bool {
+	return r.ChinaDirectEnabled == nil || *r.ChinaDirectEnabled
+}
+
+// RoutingRule maps domain matchers to a named node or region pool.
+type RoutingRule struct {
+	Name          string   `yaml:"name" json:"name"`
+	DomainSuffix  []string `yaml:"domain_suffix,omitempty" json:"domain_suffix,omitempty"`
+	DomainKeyword []string `yaml:"domain_keyword,omitempty" json:"domain_keyword,omitempty"`
+	DomainRegex   []string `yaml:"domain_regex,omitempty" json:"domain_regex,omitempty"`
+	Target        string   `yaml:"target" json:"target"`
+	Category      string   `yaml:"category,omitempty" json:"category,omitempty"`
 }
 
 // ListenerConfig defines how the HTTP/SOCKS5 mixed proxy should listen for clients.
@@ -469,6 +495,10 @@ func (c *Config) normalize() error {
 			}
 		}
 	}
+	if err := c.normalizeRouting(); err != nil {
+		return err
+	}
+
 	if c.LogLevel == "" {
 		c.LogLevel = "info"
 	}
@@ -772,6 +802,10 @@ func (c *Config) NormalizeWithPortMap(portMap map[string]uint16) error {
 			preservedPorts, newPorts, duplicatePortHits, len(c.Nodes))
 	}
 
+	if err := c.normalizeRouting(); err != nil {
+		return err
+	}
+
 	if c.LogLevel == "" {
 		c.LogLevel = "info"
 	}
@@ -815,6 +849,32 @@ func (c *Config) normalizeSticky() error {
 }
 
 // normalizeLogConfig applies defaults to the log config.
+func (c *Config) normalizeRouting() error {
+	if c.Routing.ChinaDirectEnabled == nil {
+		defaultEnabled := true
+		c.Routing.ChinaDirectEnabled = &defaultEnabled
+	}
+	seen := make(map[string]bool)
+	for i := range c.Routing.Rules {
+		rule := &c.Routing.Rules[i]
+		rule.Name = strings.TrimSpace(rule.Name)
+		if rule.Name == "" {
+			rule.Name = fmt.Sprintf("rule-%d", i+1)
+		}
+		if strings.TrimSpace(rule.Target) == "" {
+			return fmt.Errorf("routing rule %q is missing target", rule.Name)
+		}
+		if seen[rule.Name] {
+			return fmt.Errorf("duplicate routing rule name %q", rule.Name)
+		}
+		seen[rule.Name] = true
+		if len(rule.DomainSuffix)+len(rule.DomainKeyword)+len(rule.DomainRegex) == 0 && strings.TrimSpace(rule.Category) == "" {
+			return fmt.Errorf("routing rule %q has no domain matcher or category", rule.Name)
+		}
+	}
+	return nil
+}
+
 func (c *Config) normalizeLogConfig() {
 	if c.Log.Output == "" {
 		c.Log.Output = "stdout"
@@ -1922,6 +1982,7 @@ func (c *Config) SaveSettings() error {
 	saveCfg.MultiPort = c.MultiPort
 	saveCfg.Pool = c.Pool
 	saveCfg.Management = c.Management
+	saveCfg.Routing = c.Routing
 
 	newData, err := yaml.Marshal(&saveCfg)
 	if err != nil {

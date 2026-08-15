@@ -16,6 +16,7 @@ import (
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
 	poolout "easy_proxies/internal/outbound/pool"
+	"easy_proxies/internal/routing"
 	"easy_proxies/internal/ssuri"
 
 	C "github.com/sagernet/sing-box/constant"
@@ -214,6 +215,18 @@ func Build(cfg *config.Config) (option.Options, error) {
 	)
 	copy(outbounds, baseOutbounds)
 
+	const directTag = "direct-cn"
+	if cfg.Routing.ChinaDirect() {
+		outbounds = append(outbounds, option.Outbound{
+			Type: C.TypeDirect,
+			Tag:  directTag,
+		})
+	}
+
+	// Custom domain rules have highest priority, above inbound routing and the
+	// china-direct shortcut. They are assembled before route.Rules is finalized.
+	customRules := buildRoutingRules(cfg, memberTags)
+
 	// Determine which components to enable based on mode
 	enablePoolInbound := cfg.Mode == "pool" || cfg.Mode == "hybrid"
 	enableMultiPort := cfg.Mode == "multi-port" || cfg.Mode == "hybrid"
@@ -391,6 +404,28 @@ func Build(cfg *config.Config) (option.Options, error) {
 		log.Printf("   Access via: http://%s:%d/{region}", geoipListen, geoipPort)
 		log.Println("   Available regions: /jp, /kr, /us, /hk, /tw, /sg, /other")
 		log.Println("   Default (no path): all nodes pool")
+	}
+
+	if cfg.Routing.ChinaDirect() {
+		china := routing.ChinaRules()
+		route.Rules = append(route.Rules, option.Rule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultRule{
+				RawDefaultRule: option.RawDefaultRule{
+					DomainSuffix: badoption.Listable[string](china.DomainSuffix),
+					IPCIDR:       badoption.Listable[string](china.IPCIDR),
+				},
+				RuleAction: option.RuleAction{
+					Action: C.RuleActionTypeRoute,
+					RouteOptions: option.RouteActionOptions{
+						Outbound: directTag,
+					},
+				},
+			},
+		})
+	}
+	if len(customRules) > 0 {
+		route.Rules = append(customRules, route.Rules...)
 	}
 
 	opts := option.Options{
@@ -1670,4 +1705,55 @@ func buildHysteriaOptions(u *url.URL, skipCertVerify bool) (option.HysteriaOutbo
 	opts.OutboundTLSOptionsContainer = option.OutboundTLSOptionsContainer{TLS: tlsOptions}
 
 	return opts, nil
+}
+
+// buildRoutingRules converts routing.rules into sing-box DefaultRules. Invalid
+// targets are skipped with a warning rather than failing the whole config.
+func buildRoutingRules(cfg *config.Config, memberTags []string) []option.Rule {
+	memberSet := make(map[string]bool, len(memberTags)+len(cfg.Nodes))
+	for _, tag := range memberTags {
+		memberSet[tag] = true
+	}
+	for _, n := range cfg.Nodes {
+		memberSet[strings.TrimSpace(n.Name)] = true
+		memberSet[sanitizeTag(n.Name)] = true
+	}
+	var rules []option.Rule
+	for _, rule := range cfg.Routing.Rules {
+		target := strings.TrimSpace(rule.Target)
+		suffixes := append([]string(nil), rule.DomainSuffix...)
+		if rule.Category != "" {
+			if expanded := routing.ExpandCategory(rule.Category); expanded != nil {
+				suffixes = append(suffixes, expanded...)
+			} else {
+				log.Printf("⚠️  routing rule %q uses unknown category %q, skipping", rule.Name, rule.Category)
+				continue
+			}
+		}
+		if target != "" && !memberSet[target] && target != poolout.Tag && !strings.HasPrefix(target, "pool-") {
+			log.Printf("⚠️  routing rule %q target %q is not a known node/pool tag, skipping", rule.Name, target)
+			continue
+		}
+		if len(suffixes) == 0 && len(rule.DomainKeyword) == 0 && len(rule.DomainRegex) == 0 {
+			log.Printf("⚠️  routing rule %q has no matchers after expansion, skipping", rule.Name)
+			continue
+		}
+		rules = append(rules, option.Rule{
+			Type: C.RuleTypeDefault,
+			DefaultOptions: option.DefaultRule{
+				RawDefaultRule: option.RawDefaultRule{
+					DomainSuffix:  badoption.Listable[string](suffixes),
+					DomainKeyword: badoption.Listable[string](rule.DomainKeyword),
+					DomainRegex:   badoption.Listable[string](rule.DomainRegex),
+				},
+				RuleAction: option.RuleAction{
+					Action: C.RuleActionTypeRoute,
+					RouteOptions: option.RouteActionOptions{
+						Outbound: target,
+					},
+				},
+			},
+		})
+	}
+	return rules
 }
