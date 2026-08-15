@@ -24,23 +24,22 @@ PWSH := powershell -NoProfile -ExecutionPolicy Bypass
 RUN_SCRIPT := $(PWSH) -File runtime/proxy-chain.ps1
 RUN_DEPS := build
 RUN_LEGACY_DEPS := build proxypool
+PACKAGE_DEPS := all proxypool
 else ifeq ($(GOOS),darwin)
 RUN_SCRIPT := ./runtime/proxy-chain-macos.sh
 RUN_DEPS := build
 RUN_LEGACY_DEPS := build
+PACKAGE_DEPS := all
 else
 RUN_SCRIPT := ./runtime/proxy-chain.sh
 RUN_DEPS := build proxypool
 RUN_LEGACY_DEPS := build proxypool
+PACKAGE_DEPS := all proxypool
 endif
 
 .PHONY: all build proxypool run run-legacy stop restart status test vet fmt package clean
 
-ifeq ($(GOOS),darwin)
 all: build
-else
-all: build proxypool
-endif
 
 build:
 	@mkdir -p runtime
@@ -83,7 +82,7 @@ vet:
 fmt:
 	gofmt -w .
 
-package: all
+package: $(PACKAGE_DEPS)
 	@mkdir -p $(DIST_DIR)/runtime
 ifeq ($(GOOS),darwin)
 	cp $(BIN) $(DIST_DIR)/runtime/
