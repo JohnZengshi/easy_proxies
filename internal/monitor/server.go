@@ -21,6 +21,7 @@ import (
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
 	"golang.org/x/sync/semaphore"
+	"gopkg.in/yaml.v3"
 )
 
 //go:embed assets/index.html
@@ -719,13 +720,21 @@ func (s *Server) handleExport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	target := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("target")))
-	if target != "" && target != "9router" {
+	if target != "" && target != "9router" && target != "sing-box" && target != "mihomo" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "invalid target, use 9router"})
+		writeJSON(w, map[string]any{"error": "invalid target, use sing-box/mihomo/9router"})
 		return
 	}
 	if target == "9router" {
 		s.handleNineRouterExport(w, r)
+		return
+	}
+	if target == "sing-box" {
+		s.handleSingBoxExport(w, r)
+		return
+	}
+	if target == "mihomo" {
+		s.handleMihomoExport(w, r)
 		return
 	}
 
@@ -909,6 +918,117 @@ func (s *Server) handleNineRouterExport(w http.ResponseWriter, r *http.Request) 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Header().Set("Content-Disposition", "attachment; filename=9router_proxies.txt")
 	_, _ = w.Write([]byte(strings.Join(lines, "\n")))
+}
+
+// eligibleExportNodes returns healthy nodes with stable local ports for
+// sing-box/Mihomo export. The boolean is false only when the running mode is
+// pool, which has no per-node ports to expose.
+func (s *Server) eligibleExportNodes() ([]Snapshot, bool) {
+	s.cfgMu.RLock()
+	mode := ""
+	if s.cfgSrc != nil {
+		mode = s.cfgSrc.Mode
+	}
+	s.cfgMu.RUnlock()
+
+	if mode == "pool" {
+		return nil, false
+	}
+
+	var nodes []Snapshot
+	seen := make(map[uint16]bool)
+	for _, snap := range s.mgr.SnapshotFiltered(true) {
+		if snap.ListenAddress == "" || snap.Port == 0 || seen[snap.Port] {
+			continue
+		}
+		addr := snap.ListenAddress
+		if addr == "" || addr == "0.0.0.0" || addr == "::" {
+			addr = "127.0.0.1"
+		}
+		snap.ListenAddress = addr
+		seen[snap.Port] = true
+		nodes = append(nodes, snap)
+	}
+	return nodes, true
+}
+
+func (s *Server) handleSingBoxExport(w http.ResponseWriter, r *http.Request) {
+	nodes, ok := s.eligibleExportNodes()
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "sing-box export requires multi-port or hybrid mode"})
+		return
+	}
+
+	outbounds := make([]map[string]any, 0, len(nodes))
+	tags := make([]string, 0, len(nodes))
+	for _, snap := range nodes {
+		outbounds = append(outbounds, map[string]any{
+			"type":        "http",
+			"tag":         snap.Tag,
+			"server":      snap.ListenAddress,
+			"server_port": snap.Port,
+		})
+		tags = append(tags, snap.Tag)
+	}
+	outbounds = append(outbounds, map[string]any{
+		"type":      "selector",
+		"tag":       "easy-proxies",
+		"outbounds": tags,
+	})
+
+	cfg := map[string]any{
+		"outbounds": outbounds,
+		"route":     map[string]any{"final": "easy-proxies"},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Disposition", "attachment; filename=easy-proxies-sing-box.json")
+	_ = json.NewEncoder(w).Encode(cfg)
+}
+
+func (s *Server) handleMihomoExport(w http.ResponseWriter, r *http.Request) {
+	nodes, ok := s.eligibleExportNodes()
+	if !ok {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "mihomo export requires multi-port or hybrid mode"})
+		return
+	}
+
+	proxies := make([]map[string]any, 0, len(nodes))
+	names := make([]string, 0, len(nodes))
+	for _, snap := range nodes {
+		proxies = append(proxies, map[string]any{
+			"name":   snap.Tag,
+			"type":   "http",
+			"server": snap.ListenAddress,
+			"port":   snap.Port,
+		})
+		names = append(names, snap.Tag)
+	}
+	cfg := struct {
+		Proxies     []map[string]any `yaml:"proxies"`
+		ProxyGroups []map[string]any `yaml:"proxy-groups"`
+		Rules       []string         `yaml:"rules"`
+	}{
+		Proxies: proxies,
+		ProxyGroups: []map[string]any{{
+			"name":    "easy-proxies",
+			"type":    "select",
+			"proxies": names,
+		}},
+		Rules: []string{"MATCH,easy-proxies"},
+	}
+
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		http.Error(w, "failed to marshal mihomo export", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/x-yaml")
+	w.Header().Set("Content-Disposition", "attachment; filename=easy-proxies-mihomo.yaml")
+	_, _ = w.Write(data)
 }
 
 // handleSettings handles GET/PUT for dynamic settings (external_ip, probe_target, skip_cert_verify, log).
