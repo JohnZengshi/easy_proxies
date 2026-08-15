@@ -349,6 +349,11 @@ Supports Base64, plain text, and Clash YAML formats. When subscriptions are conf
 **Stable Ports** (`multi-port`/`hybrid`): each node is identified by a stable key derived from its URI (ignoring the display name and parameter order), so a node keeps the same local port even when the subscription renames or reorders it. Assignments are saved to `node_ports.json` next to `config.yaml` and restored on restart.
 
 ## WebUI Dashboard
+The WebUI includes a **Routing Rules** tab for managing per-domain node rules,
+choosing from embedded open-source service categories, and running domain
+latency tests across all healthy nodes. Rules take effect immediately without
+a process restart. macOS/Windows users can enable the system proxy from the UI
+or with `--system-proxy`; system settings are restored on shutdown.
 
 Access at `http://your-server:9091` (configurable via the `management` section).
 

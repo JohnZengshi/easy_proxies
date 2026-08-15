@@ -4,7 +4,7 @@ GOOS ?= $(shell $(GO) env GOOS)
 GOARCH ?= $(shell $(GO) env GOARCH)
 TAGS ?= with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api
 ifeq ($(GOOS),windows)
-VERSION ?= $(shell git describe --tags --always --dirty 2>NUL || echo dev)
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 else
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 endif
@@ -26,11 +26,11 @@ endif
 
 ifeq ($(GOOS),windows)
 PWSH := powershell -NoProfile -ExecutionPolicy Bypass
-MKDIR_P := $(PWSH) -Command "New-Item -ItemType Directory -Force -Path"
 RUN_SCRIPT := $(PWSH) -File runtime/proxy-chain.ps1
 RUN_DEPS := build
 RUN_LEGACY_DEPS := build proxypool
-PACKAGE_DEPS := all proxypool
+PACKAGE_DEPS := all
+PACKAGE_CMD := python3 -m zipfile -c $(PACKAGE_ARCHIVE) $(DIST_DIR)
 else ifeq ($(GOOS),darwin)
 RUN_SCRIPT := ./runtime/proxy-chain-macos.sh
 RUN_DEPS := build
@@ -43,7 +43,9 @@ RUN_LEGACY_DEPS := build proxypool
 PACKAGE_DEPS := all proxypool
 endif
 
-.PHONY: all build proxypool run run-legacy stop restart status test vet fmt package clean
+MKDIR_P := mkdir -p
+
+.PHONY: all build proxypool run run-legacy stop restart status test vet fmt package sync-ruleset clean
 
 all: build
 
@@ -88,11 +90,17 @@ vet:
 fmt:
 	gofmt -w .
 
+sync-ruleset:
+	bash scripts/sync-ruleset.sh
+
 package: $(PACKAGE_DEPS)
 	@$(MKDIR_P) $(DIST_DIR)/runtime
 ifeq ($(GOOS),darwin)
 	cp $(BIN) $(DIST_DIR)/runtime/
 	cp runtime/config.yaml runtime/proxy-chain-macos.sh runtime/sync-vpncheap-subscription.sh $(DIST_DIR)/runtime/
+else ifeq ($(GOOS),windows)
+	cp $(BIN) $(DIST_DIR)/runtime/
+	cp runtime/config.yaml runtime/proxy-chain.ps1 runtime/sync-vpncheap-subscription.ps1 $(DIST_DIR)/runtime/
 else
 	cp $(BIN) $(PP_BIN) $(DIST_DIR)/runtime/
 	cp runtime/config.yaml runtime/proxypool-config.yaml runtime/proxy-chain.sh runtime/proxy-chain.ps1 runtime/sync-vpncheap-subscription.ps1 $(DIST_DIR)/runtime/
