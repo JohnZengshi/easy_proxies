@@ -15,11 +15,14 @@ import (
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/monitor"
 
-	"gopkg.in/natefinch/lumberjack.v2")
+	"gopkg.in/natefinch/lumberjack.v2"
+)
 
 func main() {
 	var configPath string
+	var systemProxy bool
 	flag.StringVar(&configPath, "config", "config.yaml", "path to config file")
+	flag.BoolVar(&systemProxy, "system-proxy", false, "enable OS-level system proxy for macOS/Windows")
 	flag.Parse()
 
 	var cfg *config.Config
@@ -43,7 +46,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := app.Run(ctx, cfg); err != nil {
+	if err := app.Run(ctx, cfg, systemProxy); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy pool exited with error: %v\n", err)
 		os.Exit(1)
 	}
@@ -63,9 +66,9 @@ func setupLogging(cfg *config.Config) {
 		} else {
 			lj := &lumberjack.Logger{
 				Filename:   cfg.Log.File,
-				MaxSize:    cfg.Log.MaxSize,    // MB
+				MaxSize:    cfg.Log.MaxSize, // MB
 				MaxBackups: cfg.Log.MaxBackups,
-				MaxAge:     cfg.Log.MaxAge,     // days
+				MaxAge:     cfg.Log.MaxAge, // days
 				Compress:   cfg.Log.Compress,
 			}
 			writers = append(writers, lj)

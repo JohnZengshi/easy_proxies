@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,10 +13,11 @@ import (
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/monitor"
 	"easy_proxies/internal/subscription"
+	"easy_proxies/internal/sysproxy"
 )
 
 // Run builds the runtime components from config and blocks until shutdown.
-func Run(ctx context.Context, cfg *config.Config) error {
+func Run(ctx context.Context, cfg *config.Config, systemProxy bool) error {
 	// Build monitor config
 	proxyUsername := cfg.Listener.Username
 	proxyPassword := cfg.Listener.Password
@@ -42,10 +44,33 @@ func Run(ctx context.Context, cfg *config.Config) error {
 	}
 	defer boxMgr.Close()
 
-	// Wire up config to monitor server for settings API
+	sysProxy := sysproxy.New()
 	if server := boxMgr.MonitorServer(); server != nil {
 		server.SetConfig(cfg)
+		server.SetSysProxy(sysProxy)
 	}
+	if systemProxy {
+		host := cfg.Listener.Address
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		if err := sysProxy.Enable(host, int(cfg.Listener.Port)); err != nil {
+			log.Printf("⚠️  failed to enable system proxy: %v", err)
+		} else {
+			log.Printf("✅ system proxy enabled at %s:%d", host, cfg.Listener.Port)
+			if server := boxMgr.MonitorServer(); server != nil {
+				server.SetSysProxyState(true)
+			}
+		}
+	}
+	defer func() {
+		if err := sysProxy.Disable(); err != nil {
+			log.Printf("⚠️  failed to restore system proxy: %v", err)
+		}
+		if server := boxMgr.MonitorServer(); server != nil {
+			server.SetSysProxyState(false)
+		}
+	}()
 
 	// Always create SubscriptionManager so WebUI can hot-reload subscription config
 	subMgr := subscription.New(cfg, boxMgr)

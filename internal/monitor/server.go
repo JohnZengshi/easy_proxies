@@ -20,6 +20,8 @@ import (
 
 	"easy_proxies/internal/config"
 	"easy_proxies/internal/geoip"
+	"easy_proxies/internal/routing"
+	"easy_proxies/internal/sysproxy"
 	"golang.org/x/sync/semaphore"
 	"gopkg.in/yaml.v3"
 )
@@ -86,10 +88,13 @@ type Server struct {
 	// probeAllInFlight bounds batch "probe all" to a single concurrent run.
 	// Without it, N simultaneous requests each spin up to `concurrency` probes,
 	// multiplying total in-flight dials and starving host fd/memory limits.
-	probeAllInFlight atomic.Bool
+	probeAllInFlight    atomic.Bool
+	latencyTestInFlight atomic.Bool
 
 	subRefresher SubscriptionRefresher
 	nodeMgr      NodeManager
+	sysProxy     sysproxy.Proxy
+	sysActive    bool
 }
 
 // NewServer constructs a server; it can be nil when disabled.
@@ -127,6 +132,11 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
+	mux.HandleFunc("/api/routing/rules", s.withAuth(s.handleRoutingRules))
+	mux.HandleFunc("/api/routing/rules/", s.withAuth(s.handleRoutingRuleItem))
+	mux.HandleFunc("/api/routing/presets", s.withAuth(s.handleRoutingPresets))
+	mux.HandleFunc("/api/routing/latency-test", s.withAuth(s.handleRoutingLatencyTest))
+	mux.HandleFunc("/api/system-proxy", s.withAuth(s.handleSystemProxy))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
 	s.srv = &http.Server{Addr: cfg.Listen, Handler: mux}
@@ -144,6 +154,25 @@ func (s *Server) SetSubscriptionRefresher(sr SubscriptionRefresher) {
 func (s *Server) SetNodeManager(nm NodeManager) {
 	if s != nil {
 		s.nodeMgr = nm
+	}
+}
+
+// SetSysProxy binds the shared system-proxy controller so both the CLI
+// --system-proxy flag and the WebUI toggle operate on the same instance.
+func (s *Server) SetSysProxy(p sysproxy.Proxy) {
+	if s != nil {
+		s.cfgMu.Lock()
+		s.sysProxy = p
+		s.cfgMu.Unlock()
+	}
+}
+
+// SetSysProxyState mirrors the CLI-managed system proxy state into the API.
+func (s *Server) SetSysProxyState(enabled bool) {
+	if s != nil {
+		s.cfgMu.Lock()
+		s.sysActive = enabled
+		s.cfgMu.Unlock()
 	}
 }
 
@@ -1493,6 +1522,368 @@ func (s *Server) handleReload(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"message": "重载成功，现有连接已被中断",
 	})
+}
+
+func (s *Server) handleRoutingRules(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.cfgMu.RLock()
+		var rules []config.RoutingRule
+		if s.cfgSrc != nil {
+			rules = s.cfgSrc.Routing.Rules
+		}
+		s.cfgMu.RUnlock()
+		writeJSON(w, map[string]any{"rules": rules})
+	case http.MethodPost:
+		var rule config.RoutingRule
+		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			return
+		}
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSON(w, map[string]any{"error": "配置未初始化"})
+			return
+		}
+		if err := validateRoutingRule(rule); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		for _, existing := range s.cfgSrc.Routing.Rules {
+			if existing.Name == rule.Name {
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusConflict)
+				writeJSON(w, map[string]any{"error": "规则名称已存在"})
+				return
+			}
+		}
+		s.cfgSrc.Routing.Rules = append(s.cfgSrc.Routing.Rules, rule)
+		if err := s.cfgSrc.SaveSettings(); err != nil {
+			s.cfgSrc.Routing.Rules = s.cfgSrc.Routing.Rules[:len(s.cfgSrc.Routing.Rules)-1]
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		s.cfgMu.Unlock()
+		if s.nodeMgr != nil {
+			if err := s.nodeMgr.TriggerReload(r.Context()); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, map[string]any{"error": "规则已保存，热重载失败: " + err.Error()})
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"rule": rule, "message": "规则已生效"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleRoutingRuleItem(w http.ResponseWriter, r *http.Request) {
+	namePart := strings.TrimPrefix(r.URL.Path, "/api/routing/rules/")
+	name, err := url.PathUnescape(namePart)
+	if err != nil || name == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "规则名称无效"})
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var rule config.RoutingRule
+		if err := json.NewDecoder(r.Body).Decode(&rule); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			return
+		}
+		if err := validateRoutingRule(rule); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSON(w, map[string]any{"error": "配置未初始化"})
+			return
+		}
+		idx := routingRuleIndexLocked(s.cfgSrc.Routing.Rules, name)
+		if idx == -1 {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": "规则不存在"})
+			return
+		}
+		oldName := s.cfgSrc.Routing.Rules[idx].Name
+		s.cfgSrc.Routing.Rules[idx] = rule
+		s.cfgSrc.Routing.Rules[idx].Name = oldName
+		if err := s.cfgSrc.SaveSettings(); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		s.cfgMu.Unlock()
+		if s.nodeMgr != nil {
+			if err := s.nodeMgr.TriggerReload(r.Context()); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, map[string]any{"error": "规则已保存，热重载失败: " + err.Error()})
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"rule": rule, "message": "规则已生效"})
+	case http.MethodDelete:
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSON(w, map[string]any{"error": "配置未初始化"})
+			return
+		}
+		idx := routingRuleIndexLocked(s.cfgSrc.Routing.Rules, name)
+		if idx == -1 {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusNotFound)
+			writeJSON(w, map[string]any{"error": "规则不存在"})
+			return
+		}
+		s.cfgSrc.Routing.Rules = append(s.cfgSrc.Routing.Rules[:idx], s.cfgSrc.Routing.Rules[idx+1:]...)
+		if err := s.cfgSrc.SaveSettings(); err != nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		s.cfgMu.Unlock()
+		if s.nodeMgr != nil {
+			if err := s.nodeMgr.TriggerReload(r.Context()); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, map[string]any{"error": "规则已删除，热重载失败: " + err.Error()})
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"message": "规则已生效"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func (s *Server) handleRoutingPresets(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	categories := routing.Categories()
+	payload := make([]map[string]any, 0, len(categories))
+	for _, c := range categories {
+		payload = append(payload, map[string]any{
+			"id":           c.ID,
+			"name":         c.Name,
+			"domain_count": len(c.DomainSuffix),
+		})
+	}
+	writeJSON(w, map[string]any{"categories": payload})
+}
+
+func (s *Server) handleRoutingLatencyTest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || strings.TrimSpace(req.Domain) == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		writeJSON(w, map[string]any{"error": "域名不能为空"})
+		return
+	}
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "SSE not supported", http.StatusInternalServerError)
+		return
+	}
+	if !s.latencyTestInFlight.CompareAndSwap(false, true) {
+		busy, _ := json.Marshal(map[string]any{"type": "error", "message": "测速已在进行中，请稍候"})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", busy)
+		flusher.Flush()
+		return
+	}
+	defer s.latencyTestInFlight.Store(false)
+
+	snapshots := s.mgr.SnapshotFiltered(true)
+	total := len(snapshots)
+	startData, _ := json.Marshal(map[string]any{"type": "start", "total": total})
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", startData)
+	flusher.Flush()
+	if total == 0 {
+		emptyData, _ := json.Marshal(map[string]any{"type": "complete", "total": 0, "success": 0, "failed": 0})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", emptyData)
+		flusher.Flush()
+		return
+	}
+
+	concurrency := s.currentProbeConcurrency()
+	sem := semaphore.NewWeighted(concurrency)
+	type result struct {
+		tag     string
+		name    string
+		latency int64
+		err     string
+	}
+	results := make(chan result, total)
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+	var wg sync.WaitGroup
+	for _, snap := range snapshots {
+		snap := snap
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := sem.Acquire(ctx, 1); err != nil {
+				results <- result{tag: snap.Tag, name: snap.Name, latency: -1, err: "probe cancelled"}
+				return
+			}
+			defer sem.Release(1)
+			probeCtx, probeCancel := context.WithTimeout(ctx, 8*time.Second)
+			defer probeCancel()
+			latency, err := s.mgr.TestDomain(probeCtx, snap.Tag, req.Domain)
+			if err != nil {
+				results <- result{tag: snap.Tag, name: snap.Name, latency: -1, err: err.Error()}
+				return
+			}
+			results <- result{tag: snap.Tag, name: snap.Name, latency: latency.Milliseconds(), err: ""}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	success, failed, count := 0, 0, 0
+	for res := range results {
+		count++
+		if res.err != "" {
+			failed++
+		} else {
+			success++
+		}
+		status := "success"
+		if res.err != "" {
+			status = "error"
+		}
+		payload, _ := json.Marshal(map[string]any{
+			"type":    "progress",
+			"domain":  req.Domain,
+			"tag":     res.tag,
+			"name":    res.name,
+			"latency": res.latency,
+			"status":  status,
+			"error":   res.err,
+			"current": count,
+			"total":   total,
+		})
+		_, _ = fmt.Fprintf(w, "data: %s\n\n", payload)
+		flusher.Flush()
+	}
+	completeData, _ := json.Marshal(map[string]any{"type": "complete", "total": total, "success": success, "failed": failed})
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", completeData)
+	flusher.Flush()
+}
+
+func (s *Server) handleSystemProxy(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.cfgMu.RLock()
+		enabled := s.sysActive
+		proxy := s.sysProxy
+		s.cfgMu.RUnlock()
+		writeJSON(w, map[string]any{
+			"enabled":   enabled,
+			"supported": sysproxy.Supported(),
+			"proxy":     proxy != nil,
+		})
+	case http.MethodPost:
+		var req struct {
+			Enabled bool `json:"enabled"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			return
+		}
+		if !sysproxy.Supported() {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "当前平台不支持系统代理"})
+			return
+		}
+		s.cfgMu.Lock()
+		proxy := s.sysProxy
+		if proxy == nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSON(w, map[string]any{"error": "系统代理未初始化"})
+			return
+		}
+		if req.Enabled == s.sysActive {
+			s.cfgMu.Unlock()
+			writeJSON(w, map[string]any{"enabled": req.Enabled, "message": "状态未变更"})
+			return
+		}
+		host := s.cfgSrc.Listener.Address
+		port := s.cfgSrc.Listener.Port
+		if host == "" || host == "0.0.0.0" || host == "::" {
+			host = "127.0.0.1"
+		}
+		s.cfgMu.Unlock()
+		var err error
+		if req.Enabled {
+			err = proxy.Enable(host, int(port))
+		} else {
+			err = proxy.Disable()
+		}
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		s.cfgMu.Lock()
+		s.sysActive = req.Enabled
+		s.cfgMu.Unlock()
+		writeJSON(w, map[string]any{"enabled": req.Enabled, "message": "系统代理已生效"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func validateRoutingRule(rule config.RoutingRule) error {
+	if strings.TrimSpace(rule.Name) == "" {
+		return errors.New("规则名称不能为空")
+	}
+	if strings.TrimSpace(rule.Target) == "" {
+		return errors.New("目标节点不能为空")
+	}
+	if len(rule.DomainSuffix)+len(rule.DomainKeyword)+len(rule.DomainRegex) == 0 && rule.Category == "" {
+		return errors.New("至少需要一个域名匹配条件或规则分类")
+	}
+	return nil
+}
+
+func routingRuleIndexLocked(rules []config.RoutingRule, name string) int {
+	for i, rule := range rules {
+		if rule.Name == name {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {

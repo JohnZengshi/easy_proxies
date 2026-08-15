@@ -424,7 +424,11 @@
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
         控制台日志
       </div>
-      <div class="nav-item" onclick="switchTab('settings')">
+                    <div class="nav-item" onclick="switchTab('routing')">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line><line x1="12" y1="5" x2="20" y2="5"></line><line x1="12" y1="12" x2="20" y2="12"></line></svg>
+                      分流规则
+                    </div>
+                    <div class="nav-item" onclick="switchTab('settings')">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
         系统设置
       </div>
@@ -821,9 +825,82 @@
             </div>
           </form>
         </div>
-      </div>
+            </div>
 
-    </div>
+            <!-- Routing Tab -->
+            <div id="routingTab" class="tab-content">
+              <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+                <div style="font-size:20px; font-weight:700; color:var(--text-main);">分流规则</div>
+                <div style="display:flex; gap:10px; align-items:center; color:var(--text-muted); font-size:13px;">
+                  <span id="routingSysProxyState">系统代理未初始化</span>
+                  <button class="btn btn-sm" onclick="toggleRoutingSystemProxy()">切换系统代理</button>
+                </div>
+              </div>
+              <div class="overview-grid">
+                <div class="stat-panel">
+                  <div class="stat-title">自定义规则</div>
+                  <div class="stat-value" id="routingRuleCount">0</div>
+                  <div class="stat-sub">保存后自动生效</div>
+                </div>
+                <div class="stat-panel">
+                  <div class="stat-title">规则分类</div>
+                  <div class="stat-value" id="routingPresetCount">0</div>
+                  <div class="stat-sub">内置开源清单</div>
+                </div>
+                <div class="stat-panel">
+                  <div class="stat-title">状态</div>
+                  <div class="stat-value" style="color: var(--success);" id="routingStatus">OK</div>
+                  <div class="stat-sub">WebUI 热更新</div>
+                </div>
+              </div>
+              <div style="display:grid; grid-template-columns: minmax(420px, 1.25fr) minmax(340px, 1fr); gap:16px; margin-top:16px;">
+                <div class="panel">
+                  <div class="panel-header"><div class="panel-title">规则配置</div></div>
+                  <div style="padding:16px; display:grid; gap:12px;">
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                      <div class="form-group"><label>规则名称</label><input id="routingRuleName" class="setting-input" placeholder="openai-jp" /></div>
+                      <div class="form-group"><label>目标节点</label><select id="routingRuleTarget" class="setting-input"></select></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 2fr; gap:12px;">
+                      <div class="form-group">
+                        <label>匹配类型</label>
+                        <select id="routingRuleType" class="setting-input">
+                          <option value="suffix">域名后缀</option>
+                          <option value="keyword">关键词</option>
+                          <option value="regex">正则</option>
+                        </select>
+                      </div>
+                      <div class="form-group"><label>匹配值（多个用逗号分隔）</label><input id="routingRuleValue" class="setting-input" placeholder="openai.com" /></div>
+                    </div>
+                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
+                      <div class="form-group"><label>预设服务</label><select id="routingRulePreset" class="setting-input"><option value="">不使用预设</option></select></div>
+                      <div style="display:flex; align-items:flex-end; justify-content:flex-end; gap:8px;">
+                        <button class="btn btn-sm" onclick="routingRuleAddPreset()">添加预设</button>
+                        <button class="btn btn-primary btn-sm" onclick="routingRuleAdd()">添加规则</button>
+                      </div>
+                    </div>
+                    <div class="table-container">
+                      <table>
+                        <thead><tr><th>名称</th><th>匹配</th><th>目标</th><th>操作</th></tr></thead>
+                        <tbody id="routingRulesTableBody"></tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+                <div class="panel">
+                  <div class="panel-header"><div class="panel-title">域名测速</div></div>
+                  <div style="padding:16px; display:grid; gap:12px;">
+                    <div style="display:flex; gap:8px;">
+                      <input id="routingLatencyDomain" class="setting-input" placeholder="example.com" />
+                      <button class="btn btn-primary" onclick="routingRunLatency()">测速</button>
+                    </div>
+                    <div id="routingLatencyResults" style="display:grid; gap:8px; max-height:480px; overflow:auto;"></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
   </main>
 
   <!-- Modals -->
@@ -985,6 +1062,7 @@
         stopLogPolling();
       }
       if (name === 'settings') loadSettingsPage();
+      if (name === 'routing') loadRoutingTab();
     }
 
     function toggleAutoRefresh() {
@@ -994,6 +1072,213 @@
     }
     function startAutoRefresh() { if(!autoRefreshInterval) autoRefreshInterval = setInterval(()=> { if(!document.hidden && document.getElementById('dashboardTab').classList.contains('active')) refresh(); }, 10000); }
     function stopAutoRefresh() { clearInterval(autoRefreshInterval); autoRefreshInterval = null; }
+
+    let routingPresets = [];
+    let routingRules = [];
+    let routingLatency = {};
+    let routingEditName = '';
+
+    async function loadRoutingTab() {
+      await Promise.all([loadRoutingRules(), loadRoutingPresets(), loadRoutingTargets(), loadSysProxy()]);
+    }
+
+    async function loadRoutingRules() {
+      try {
+        const r = await fetch('/api/routing/rules');
+        const d = await r.json();
+        routingRules = d.rules || [];
+        renderRoutingRules();
+      } catch(e) { console.error(e); }
+    }
+
+    function renderRoutingRules() {
+      document.getElementById('routingRuleCount').textContent = routingRules.length;
+      const tb = document.getElementById('routingRulesTableBody');
+      tb.innerHTML = '';
+      if (!routingRules.length) {
+        tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:12px;">暂无规则</td></tr>';
+        return;
+      }
+      routingRules.forEach(rule => {
+        const match = rule.domain_suffix && rule.domain_suffix.length ? rule.domain_suffix.join(',') : (rule.domain_keyword && rule.domain_keyword.length ? rule.domain_keyword.join(',') : (rule.domain_regex && rule.domain_regex.length ? rule.domain_regex.join(',') : (rule.category || '-')));
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${escapeHtml(rule.name)}</td><td style="font-size:11px;">${escapeHtml(match)}</td><td>${escapeHtml(rule.target)}</td><td><button class="btn btn-sm" onclick='routingEditRule(${JSON.stringify(rule.name).replace(/'/g, "&#39;")})'>编辑</button> <button class="btn btn-sm btn-warning" onclick='routingDeleteRule(${JSON.stringify(rule.name).replace(/'/g, "&#39;")})'>删除</button></td>`;
+        tb.appendChild(tr);
+      });
+    }
+
+    function escapeHtml(v) {
+      return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+
+    async function loadRoutingPresets() {
+      try {
+        const r = await fetch('/api/routing/presets');
+        const d = await r.json();
+        routingPresets = d.categories || [];
+        document.getElementById('routingPresetCount').textContent = routingPresets.length;
+        const sel = document.getElementById('routingRulePreset');
+        const old = sel.value;
+        sel.innerHTML = '<option value="">不使用预设</option>';
+        routingPresets.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = `${c.name} (${c.domain_count})`;
+          sel.appendChild(opt);
+        });
+        sel.value = old;
+      } catch(e) { console.error(e); }
+    }
+
+    async function loadRoutingTargets() {
+      try {
+        const r = await fetch('/api/nodes');
+        const d = await r.json();
+        const nodes = d.nodes || [];
+        const sel = document.getElementById('routingRuleTarget');
+        const old = sel.value;
+        sel.innerHTML = '<option value="proxy-pool">proxy-pool（默认代理池）</option>';
+        const seen = new Set(['proxy-pool']);
+        nodes.forEach(n => {
+          if (!seen.has(n.tag)) { seen.add(n.tag); const o=document.createElement('option'); o.value=n.tag; o.textContent=`${n.name} (${n.tag})`; sel.appendChild(o); }
+        });
+        Object.keys(d.region_stats || {}).forEach(region => {
+          const poolTag = `pool-${region}`;
+          if (!seen.has(poolTag)) { seen.add(poolTag); const o=document.createElement('option'); o.value=poolTag; o.textContent=poolTag; sel.appendChild(o); }
+        });
+        sel.value = old;
+      } catch(e) { console.error(e); }
+    }
+
+    async function routingRuleAdd() {
+      const name = document.getElementById('routingRuleName').value.trim();
+      const target = document.getElementById('routingRuleTarget').value;
+      const type = document.getElementById('routingRuleType').value;
+      const value = document.getElementById('routingRuleValue').value.trim();
+      const category = document.getElementById('routingRulePreset').value;
+      if (!name || !target) { showToast('请填写规则名称和目标节点', 'error'); return; }
+      if (!value && !category) { showToast('请填写域名或选择预设服务', 'error'); return; }
+      const payload = { name, target, category: category || '' };
+      if (value) {
+        const list = value.split(',').map(v => v.trim()).filter(Boolean);
+        if (!list.length) { showToast('匹配值无效', 'error'); return; }
+        if (type === 'suffix') payload.domain_suffix = list;
+        if (type === 'keyword') payload.domain_keyword = list;
+        if (type === 'regex') payload.domain_regex = list;
+      }
+      const editing = routingEditName;
+      const url = editing ? `/api/routing/rules/${encodeURIComponent(editing)}` : '/api/routing/rules';
+      const method = editing ? 'PUT' : 'POST';
+      const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+      const d = await r.json();
+      if (!r.ok) { showToast(d.error || '保存失败', 'error'); return; }
+      routingEditName = '';
+      document.getElementById('routingRuleName').value = '';
+      document.getElementById('routingRuleValue').value = '';
+      document.getElementById('routingRulePreset').value = '';
+      showToast(d.message || '规则已生效');
+      await loadRoutingRules();
+    }
+
+    function routingEditRule(name) {
+      const rule = routingRules.find(r => r.name === name);
+      if (!rule) return;
+      routingEditName = name;
+      document.getElementById('routingRuleName').value = rule.name;
+      document.getElementById('routingRuleTarget').value = rule.target;
+      document.getElementById('routingRulePreset').value = rule.category || '';
+      if ((rule.domain_suffix || []).length) { document.getElementById('routingRuleType').value='suffix'; document.getElementById('routingRuleValue').value = rule.domain_suffix.join(','); }
+      else if ((rule.domain_keyword || []).length) { document.getElementById('routingRuleType').value='keyword'; document.getElementById('routingRuleValue').value = rule.domain_keyword.join(','); }
+      else if ((rule.domain_regex || []).length) { document.getElementById('routingRuleType').value='regex'; document.getElementById('routingRuleValue').value = rule.domain_regex.join(','); }
+      else { document.getElementById('routingRuleValue').value = ''; }
+    }
+
+    async function routingRuleAddPreset() {
+      const category = document.getElementById('routingRulePreset').value;
+      const target = document.getElementById('routingRuleTarget').value;
+      if (!category) { showToast('请先选择预设服务', 'error'); return; }
+      const preset = routingPresets.find(c => c.id === category);
+      const name = category + (target ? '-' + target.replace(/[^A-Za-z0-9_-]/g,'') : '');
+      const r = await fetch('/api/routing/rules', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, category, target})});
+      const d = await r.json();
+      showToast(d.error || '预设规则已生效', r.ok ? 'success' : 'error');
+      if (r.ok) loadRoutingRules();
+    }
+
+    async function routingDeleteRule(name) {
+      const r = await fetch(`/api/routing/rules/${encodeURIComponent(name)}`, {method:'DELETE'});
+      const d = await r.json();
+      showToast(d.error || '规则已生效', r.ok ? 'success' : 'error');
+      if (r.ok) loadRoutingRules();
+    }
+
+    async function routingRunLatency() {
+      const domain = document.getElementById('routingLatencyDomain').value.trim().toLowerCase();
+      if (!domain) { showToast('请输入域名', 'error'); return; }
+      showToast('测速中，请稍候');
+      try {
+        const r = await fetch('/api/routing/latency-test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({domain})});
+        const text = await r.text();
+        const results = [];
+        text.split('\n').filter(l => l.startsWith('data: ')).forEach(l => {
+          try { results.push(JSON.parse(l.slice(6))); } catch(e){}
+        });
+        routingLatency[domain] = results.filter(x => x.type === 'progress');
+        renderRoutingLatency();
+      } catch(e) { showToast('测速失败: ' + e.message, 'error'); }
+    }
+
+    function renderRoutingLatency() {
+      const wrap = document.getElementById('routingLatencyResults');
+      wrap.innerHTML = '';
+      Object.entries(routingLatency).forEach(([domain, results]) => {
+        const ok = results.filter(r => r.status === 'success');
+        const fail = results.length - ok.length;
+        const fastest = ok.length ? Math.min(...ok.map(r => r.latency)) : -1;
+        const card = document.createElement('div');
+        card.className = 'stat-panel';
+        card.style.cursor = 'pointer';
+        card.innerHTML = `<div style="display:flex; align-items:center; gap:10px;"><span class="status-dot" style="background:${ok.length?'var(--success)':'var(--error)'};"></span><div><div style="font-size:14px; font-weight:600; color:var(--text-main);">${escapeHtml(domain)}</div><div style="font-size:11px; color:var(--text-muted);">${ok.length} 可达 / ${fail} 不可达${fastest>=0 ? ' · 最快 '+fastest+'ms' : ''}</div></div></div><div style="font-size:16px; color:${ok.length?'var(--success)':'var(--error)'};">${ok.length?'✓':'✗'}</div>`;
+        card.addEventListener('click', () => {
+          const detail = document.createElement('div');
+          detail.style.cssText = 'grid-column:1/-1;';
+          detail.innerHTML = `<table><thead><tr><th>节点</th><th>延迟</th><th>状态</th><th></th></tr></thead><tbody>${results.map(r => `<tr><td>${escapeHtml(r.name || r.tag)}</td><td>${r.latency >= 0 ? r.latency+'ms' : '-'}</td><td style="color:${r.status==='success'?'var(--success)':'var(--error)'};">${r.status==='success'?'可达':escapeHtml(r.error||'不可达')}</td><td><button class="btn btn-sm" onclick='routingUseLatencyNode(${JSON.stringify(r.tag)}, ${JSON.stringify(domain)})'>使用此节点</button></td></tr>`).join('')}</tbody></table>`;
+          wrap.parentElement.insertBefore(detail, wrap.nextSibling);
+          setTimeout(() => detail.remove(), 8000);
+        });
+        wrap.appendChild(card);
+      });
+    }
+
+    function routingUseLatencyNode(tag, domain) {
+      document.getElementById('routingRuleTarget').value = tag;
+      document.getElementById('routingRuleName').value = domain.replace(/[^A-Za-z0-9_.-]/g, '-');
+      document.getElementById('routingRuleType').value = 'suffix';
+      document.getElementById('routingRuleValue').value = domain;
+      showToast('已填入规则表单');
+    }
+
+    async function loadSysProxy() {
+      try {
+        const r = await fetch('/api/system-proxy');
+        const d = await r.json();
+        const el = document.getElementById('routingSysProxyState');
+        if (!d.supported) { el.textContent = '当前平台不支持系统代理'; return; }
+        el.textContent = d.enabled ? '系统代理已开启' : '系统代理已关闭';
+      } catch(e) { console.error(e); }
+    }
+
+    async function toggleRoutingSystemProxy() {
+      try {
+        const g = await fetch('/api/system-proxy');
+        const d = await g.json();
+        if (!d.supported) { showToast('当前平台不支持系统代理', 'error'); return; }
+        const r = await fetch('/api/system-proxy', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: !d.enabled})});
+        const res = await r.json();
+        showToast(res.error || res.message, r.ok ? 'success' : 'error');
+        loadSysProxy();
+      } catch(e) { showToast('切换失败: ' + e.message, 'error'); }
+    }
 
     function getQualityWidth(ms) {
       if(ms < 0) return 0; if(ms > 1000) return 100;
