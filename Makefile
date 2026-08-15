@@ -3,12 +3,17 @@ GO ?= go
 GOOS ?= $(shell $(GO) env GOOS)
 GOARCH ?= $(shell $(GO) env GOARCH)
 TAGS ?= with_utls with_quic with_grpc with_wireguard with_gvisor with_clash_api
+ifeq ($(GOOS),windows)
+VERSION ?= $(shell git describe --tags --always --dirty 2>NUL || echo dev)
+else
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+endif
 
 EXE := $(if $(filter windows,$(GOOS)),.exe,)
 BIN := runtime/easy_proxies$(EXE)
 PP_BIN := runtime/proxypool$(EXE)
 PP_DIR ?= $(abspath ../proxypool)
+MKDIR_P := mkdir -p
 
 DIST_DIR := dist/easy_proxies-$(VERSION)-$(GOOS)-$(GOARCH)
 ifeq ($(GOOS),windows)
@@ -21,6 +26,7 @@ endif
 
 ifeq ($(GOOS),windows)
 PWSH := powershell -NoProfile -ExecutionPolicy Bypass
+MKDIR_P := $(PWSH) -Command "New-Item -ItemType Directory -Force -Path"
 RUN_SCRIPT := $(PWSH) -File runtime/proxy-chain.ps1
 RUN_DEPS := build
 RUN_LEGACY_DEPS := build proxypool
@@ -42,12 +48,12 @@ endif
 all: build
 
 build:
-	@mkdir -p runtime
+	@$(MKDIR_P) runtime
 	$(GO) build -tags "$(TAGS)" -o $(BIN) ./cmd/easy_proxies
 
 proxypool:
 	@test -d "$(PP_DIR)" || { echo "ERROR: proxypool source not found at $(PP_DIR)"; exit 1; }
-	@mkdir -p runtime
+	@$(MKDIR_P) runtime
 	cd "$(PP_DIR)" && $(GO) build -tags "with_quic with_utls" -o "$(abspath $(PP_BIN))" ./cmd/proxypool
 
 run: $(RUN_DEPS)
@@ -83,7 +89,7 @@ fmt:
 	gofmt -w .
 
 package: $(PACKAGE_DEPS)
-	@mkdir -p $(DIST_DIR)/runtime
+	@$(MKDIR_P) $(DIST_DIR)/runtime
 ifeq ($(GOOS),darwin)
 	cp $(BIN) $(DIST_DIR)/runtime/
 	cp runtime/config.yaml runtime/proxy-chain-macos.sh runtime/sync-vpncheap-subscription.sh $(DIST_DIR)/runtime/
