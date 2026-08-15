@@ -469,6 +469,8 @@
         <button class="btn" onclick="exportNodes()">导出配置</button>
         <button class="btn" onclick="exportNodes(true)">全部导出</button>
         <button class="btn" onclick="exportNodes('9router')">9router 导出</button>
+        <button class="btn" onclick="exportNodes('sing-box')">sing-box 导出</button>
+        <button class="btn" onclick="exportNodes('mihomo')">Mihomo 导出</button>
         <button class="btn" onclick="toggleAutoRefresh()" id="autoRefreshBtn">⏹ 关闭自动刷新</button>
         <button class="btn" onclick="refresh()">↺ 刷新</button>
       </div>
@@ -1359,6 +1361,8 @@
         let filename = 'nodes.txt';
         if(mode === 'all') { query = '?all=true'; filename = 'nodes_all.txt'; }
         if(mode === '9router') { query = '?target=9router'; filename = 'nodes_9router.txt'; }
+        if(mode === 'sing-box') { query = '?target=sing-box'; filename = 'easy-proxies-sing-box.json'; }
+        if(mode === 'mihomo') { query = '?target=mihomo'; filename = 'easy-proxies-mihomo.yaml'; }
         const res = await fetch('/api/export' + query);
         if(!res.ok) throw new Error();
         const blob = await res.blob();

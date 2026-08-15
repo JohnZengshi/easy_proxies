@@ -374,11 +374,24 @@ When `management.password` is empty, authentication is bypassed.
 | `/api/nodes/{tag}/release` | POST | Release node from blacklist |
 | `/api/nodes/probe-all` | POST | Probe all nodes (SSE stream) |
 | `/api/export` | GET | Export node configuration |
+| `/api/export?target=sing-box` | GET | Export sing-box config |
+| `/api/export?target=mihomo` | GET | Export Mihomo config |
 | `/api/subscription/config` | GET, PUT | Manage subscription URLs |
 | `/api/subscription/status` | GET | Check subscription status |
 | `/api/subscription/refresh` | POST | Trigger manual refresh |
 | `/api/nodes/config` | GET, POST, PUT, DELETE | CRUD for node config |
 | `/api/reload` | POST | Reload sing-box instance |
+
+### Export to sing-box / Mihomo
+
+When running in `multi-port` or `hybrid` mode, the WebUI can export the current healthy node list as a config that is ready to be merged into `sing-box` or Mihomo:
+
+```text
+http://127.0.0.1:9091/api/export?target=sing-box
+http://127.0.0.1:9091/api/export?target=mihomo
+```
+
+The sing-box export is JSON with one `http` outbound per node and a `selector` outbound named `easy-proxies` used by `route.final`. The Mihomo export is Clash-format YAML with one `http` proxy per node and a `select` proxy-group named `easy-proxies`. Neither export includes usernames, passwords, or domain routing rules. Import the output into an existing config (merge `outbounds`/`route` or `proxies`/`proxy-groups`) or use the Mihomo YAML directly as a base config, then add your own `rules` for domain-based routing. This export requires per-node ports, so it returns an error in `pool`-only mode.
 
 ## Docker Deployment
 

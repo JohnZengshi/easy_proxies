@@ -108,6 +108,17 @@ http://127.0.0.1:24002
 
 此方式要求 9router 与 easy_proxies 位于同一主机的网络命名空间。当前节点地址只绑定 `127.0.0.1`，Docker 容器或其他机器不能直接使用这些地址。
 
+#### 导出到 sing-box / Mihomo
+
+`multi-port` 或 `hybrid` 模式下，WebUI 可以把当前健康节点导出为可直接合并到 sing-box 或 Mihomo 的配置：
+
+```text
+http://127.0.0.1:9091/api/export?target=sing-box
+http://127.0.0.1:9091/api/export?target=mihomo
+```
+
+sing-box 导出为 JSON：每个节点生成一个 `http` outbound，并带一个名为 `easy-proxies` 的 `selector` outbound 作为 `route.final`。Mihomo 导出为 Clash 格式 YAML：每个节点生成一个 `type: http` proxy，并带一个名为 `easy-proxies` 的 `select` proxy-group。两种导出都不含用户名、密码或域名分流规则。你可以把导出的 `outbounds`/`route` 或 `proxies`/`proxy-groups` 合并进现有配置，Mihomo YAML 也可以直接作为基础配置使用，再自行添加域名规则。此导出依赖每节点独立端口，因此 `pool` 模式会返回错误。
+
 #### 验证
 
 ```powershell
@@ -243,6 +254,8 @@ dns:
 - `POST /api/nodes/probe-all`（SSE）
 - `GET /api/export`
 - `GET /api/export?target=9router`（9router 批量导入格式，全量节点、每行一个 HTTP 地址）
+- `GET /api/export?target=sing-box`（sing-box 配置导出）
+- `GET /api/export?target=mihomo`（Mihomo 配置导出）
 - `GET|PUT /api/subscription/config`
 - `GET|POST /api/subscription/status|refresh`
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`
