@@ -5,7 +5,6 @@ package sysproxy
 import (
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 	"syscall"
 )
@@ -14,33 +13,26 @@ const internetSettingsKey = `HKCU\Software\Microsoft\Windows\CurrentVersion\Inte
 
 type windowsProxy struct {
 	baseProxy
-	originalProxyServer string
-	originalProxyEnable string
+	originalAutoConfigURL string
 }
 
 func newPlatformProxy() Proxy {
 	return &windowsProxy{}
 }
 
-func (p *windowsProxy) Enable(host string, port int) error {
+func (p *windowsProxy) Enable(pacURL string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.enabled {
 		return nil
 	}
-	p.originalProxyServer = regQuery("ProxyServer")
-	p.originalProxyEnable = regQuery("ProxyEnable")
-	server := joinHostPort(host, port)
-	if err := regAdd("ProxyServer", "REG_SZ", server); err != nil {
-		return err
-	}
-	if err := regAdd("ProxyEnable", "REG_DWORD", "1"); err != nil {
+	p.originalAutoConfigURL = regQuery("AutoConfigURL")
+	if err := regAdd("AutoConfigURL", "REG_SZ", pacURL); err != nil {
 		return err
 	}
 	notifyInternetSettingsChanged()
 	p.enabled = true
-	p.host = host
-	p.port = port
+	p.pacURL = pacURL
 	return nil
 }
 
@@ -50,26 +42,14 @@ func (p *windowsProxy) Disable() error {
 	if !p.enabled {
 		return nil
 	}
-	if p.originalProxyServer != "" {
-		_ = regAdd("ProxyServer", "REG_SZ", p.originalProxyServer)
+	if p.originalAutoConfigURL != "" {
+		_ = regAdd("AutoConfigURL", "REG_SZ", p.originalAutoConfigURL)
 	} else {
-		_ = exec.Command("reg", "delete", internetSettingsKey, "/v", "ProxyServer", "/f").Run()
-	}
-	if p.originalProxyEnable != "" {
-		_ = regAdd("ProxyEnable", "REG_DWORD", p.originalProxyEnable)
-	} else {
-		_ = regAdd("ProxyEnable", "REG_DWORD", "0")
+		_ = exec.Command("reg", "delete", internetSettingsKey, "/v", "AutoConfigURL", "/f").Run()
 	}
 	notifyInternetSettingsChanged()
 	p.enabled = false
 	return nil
-}
-
-func joinHostPort(host string, port int) string {
-	if strings.Contains(host, ":") {
-		return "[" + host + "]:" + strconv.Itoa(port)
-	}
-	return host + ":" + strconv.Itoa(port)
 }
 
 func regQuery(name string) string {

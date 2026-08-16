@@ -45,6 +45,10 @@ expect_happy() {
   rg -q 'listen: "127\.0\.0\.1:9091"' "$output" || { echo "FAIL: management port missing"; FAILED=1; }
   rg -q 'skip_cert_verify: false' "$output" || { echo "FAIL: cert verification disabled"; FAILED=1; }
   rg -q "https://example\.test/subscribe\?token=fixture-secret" "$output" || { echo "FAIL: subscription URL missing"; FAILED=1; }
+  if rg -q '^routing:' "$output"; then
+    echo "FAIL: fresh config unexpectedly contains routing block"
+    FAILED=1
+  fi
   if rg -q 'fixture-secret' "$TEMP/last-log"; then
     echo "FAIL: resolver output leaked subscription secret"
     FAILED=1
@@ -116,6 +120,16 @@ mkdir -p "$TEMP/output_dir"
 make_plist "$TEMP/output_dir/app_state.plist" '{"xboard_subscription":"{\"value\":{\"subscribe_url\":\"https://example.test/sub\"}}"}'
 run_resolver "$TEMP/output_dir/app_state.plist" "$TEMP/output_dir"
 [ "$(cat "$TEMP/last-code")" = "0" ] && { echo "FAIL: directory output unexpectedly succeeded"; FAILED=1; }
+
+mkdir -p "$TEMP/preserve_routing"
+cp "$TEMP/happy/easy_proxies-config.yaml" "$TEMP/preserve_routing/easy_proxies-config.yaml"
+printf '\nrouting:\n  china_direct_enabled: true\n  rules:\n    - name: openai\n      domain_suffix:\n        - openai.com\n      target: proxy-pool\n' >> "$TEMP/preserve_routing/easy_proxies-config.yaml"
+make_plist "$TEMP/preserve_routing/app_state.plist" '{"xboard_subscription":"{\"value\":{\"subscribe_url\":\"https://example.test/subscribe?token=preserve-secret\"}}"}'
+run_resolver "$TEMP/preserve_routing/app_state.plist" "$TEMP/preserve_routing/easy_proxies-config.yaml"
+[ "$(cat "$TEMP/last-code")" = "0" ] || { echo "FAIL: routing preserve resolver failed"; FAILED=1; }
+rg -q '^routing:' "$TEMP/preserve_routing/easy_proxies-config.yaml" || { echo "FAIL: routing block lost after regeneration"; FAILED=1; }
+rg -q 'openai.com' "$TEMP/preserve_routing/easy_proxies-config.yaml" || { echo "FAIL: routing rule content lost after regeneration"; FAILED=1; }
+rg -q 'preserve-secret' "$TEMP/last-log" && { echo "FAIL: preserve fixture leaked secret"; FAILED=1; }
 
 if [ "$FAILED" = "0" ]; then
   echo "sync-vpncheap-subscription tests passed"

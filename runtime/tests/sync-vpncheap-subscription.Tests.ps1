@@ -53,6 +53,21 @@ try {
         }
     }
 
+    $preserveDir = Join-Path $TempRoot 'preserve_routing'
+    New-Item -ItemType Directory -Path $preserveDir -Force | Out-Null
+    $preserveState = Join-Path $preserveDir 'app_state.json'
+    $preserveOutput = Join-Path $preserveDir 'easy_proxies-config.yaml'
+    Set-Content -LiteralPath $preserveOutput -Value ($config + "`nrouting:`n  china_direct_enabled: true`n  rules:`n    - name: openai`n      domain_suffix:`n        - openai.com`n      target: proxy-pool`n") -Encoding utf8
+    Write-FakeState $preserveState (@{
+        xboard_subscription = @{ subscribe_url = 'https://example.test/subscribe?token=preserve-secret' }
+    } | ConvertTo-Json -Depth 5)
+    $preserveResult = Invoke-Resolver $preserveState $preserveOutput
+    if ($preserveResult.ExitCode -ne 0) { throw "routing preserve resolver exited $($preserveResult.ExitCode)" }
+    if ($preserveResult.Log -match 'preserve-secret') { throw 'routing preserve fixture leaked subscription secret' }
+    $preserved = Get-Content -Raw -LiteralPath $preserveOutput
+    if ($preserved -notmatch '^routing:') { throw 'routing block was lost after regeneration' }
+    if ($preserved -notmatch 'openai.com') { throw 'routing rule content was lost after regeneration' }
+
     $failureCases = @(
         @{ Name = 'missing_state'; Write = { param($p) }; Expect = 'state file is not available' },
         @{

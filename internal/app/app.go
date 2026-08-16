@@ -50,14 +50,11 @@ func Run(ctx context.Context, cfg *config.Config, systemProxy bool) error {
 		server.SetSysProxy(sysProxy)
 	}
 	if systemProxy {
-		host := cfg.Listener.Address
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = "127.0.0.1"
-		}
-		if err := sysProxy.Enable(host, int(cfg.Listener.Port)); err != nil {
+		pacURL := sysproxy.PACURL(cfg.Management.Listen)
+		if err := sysProxy.Enable(pacURL); err != nil {
 			log.Printf("⚠️  failed to enable system proxy: %v", err)
 		} else {
-			log.Printf("✅ system proxy enabled at %s:%d", host, cfg.Listener.Port)
+			log.Printf("✅ system proxy enabled with PAC %s", pacURL)
 			if server := boxMgr.MonitorServer(); server != nil {
 				server.SetSysProxyState(true)
 			}

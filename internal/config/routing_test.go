@@ -63,3 +63,44 @@ routing:
 		t.Fatal("expected empty target to be rejected")
 	}
 }
+
+func TestLoadRoutingRulesAddsIDsAndPreservesDisabled(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	yaml := `
+mode: pool
+listener:
+  port: 2323
+nodes:
+  - name: jp-1
+    uri: ss://YWVzLTI1Ni1nY206cGFzcw==@127.0.0.1:8388
+routing:
+  rules:
+    - name: a
+      category: openai
+      target: proxy-pool
+    - name: b
+      domain_suffix: [example.com]
+      target: proxy-pool
+      enabled: false
+`
+	if err := os.WriteFile(path, []byte(yaml), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Routing.Rules) != 2 {
+		t.Fatalf("expected 2 rules, got %d", len(cfg.Routing.Rules))
+	}
+	if cfg.Routing.Rules[0].ID == "" || cfg.Routing.Rules[1].ID == "" || cfg.Routing.Rules[0].ID == cfg.Routing.Rules[1].ID {
+		t.Fatalf("rules should have unique ids: %+v", cfg.Routing.Rules)
+	}
+	if !cfg.Routing.Rules[0].IsEnabled() {
+		t.Fatal("rule without enabled should default to true")
+	}
+	if cfg.Routing.Rules[1].IsEnabled() {
+		t.Fatal("rule with enabled=false should be disabled")
+	}
+}

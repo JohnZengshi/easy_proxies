@@ -48,6 +48,23 @@ func TestBuildRoutingTargetInvalid(t *testing.T) {
 	}
 }
 
+func TestBuildRoutingSkipsDisabledRules(t *testing.T) {
+	enabled := true
+	disabled := false
+	cfg := &config.Config{
+		Routing: config.RoutingConfig{
+			Rules: []config.RoutingRule{
+				{Name: "on", DomainSuffix: []string{"on.example.com"}, Target: "ok", Enabled: &enabled},
+				{Name: "off", DomainSuffix: []string{"off.example.com"}, Target: "ok", Enabled: &disabled},
+			},
+		},
+	}
+	rules := buildRoutingRules(cfg, []string{"ok"})
+	if len(rules) != 1 {
+		t.Fatalf("expected only enabled rule, got %d", len(rules))
+	}
+}
+
 func TestBuildIncludesDirectChina(t *testing.T) {
 	cfg := &config.Config{
 		Mode:  "pool",

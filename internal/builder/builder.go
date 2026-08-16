@@ -1720,6 +1720,9 @@ func buildRoutingRules(cfg *config.Config, memberTags []string) []option.Rule {
 	}
 	var rules []option.Rule
 	for _, rule := range cfg.Routing.Rules {
+		if !rule.IsEnabled() {
+			continue
+		}
 		target := strings.TrimSpace(rule.Target)
 		suffixes := append([]string(nil), rule.DomainSuffix...)
 		if rule.Category != "" {

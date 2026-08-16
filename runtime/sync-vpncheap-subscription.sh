@@ -45,6 +45,16 @@ esac
 OUT_DIR="$(dirname "$OUTPUT_PATH")"
 mkdir -p "$OUT_DIR"
 [ -e "$OUTPUT_PATH" ] && [ ! -f "$OUTPUT_PATH" ] && die "output config path is not a file"
+
+EXISTING_ROUTING=""
+if [ -f "$OUTPUT_PATH" ]; then
+  EXISTING_ROUTING="$(awk '
+    /^routing:/ { flag=1; print; next }
+    flag && /^[A-Za-z_][A-Za-z0-9_-]*:/ { flag=0 }
+    flag { print }
+  ' "$OUTPUT_PATH")"
+fi
+
 umask 077
 TMP_OUT="$(mktemp "$OUT_DIR/.easy_proxies-config.XXXXXX")"
 trap 'rm -f -- "$TMP_OUT"' EXIT
@@ -100,6 +110,10 @@ printf '%s\n' \
   '  drain_timeout: 30s' \
   '  min_available_nodes: 1' \
   > "$TMP_OUT"
+
+if [ -n "$EXISTING_ROUTING" ]; then
+  printf '\n%s\n' "$EXISTING_ROUTING" >> "$TMP_OUT"
+fi
 
 chmod 600 "$TMP_OUT"
 mv -f "$TMP_OUT" "$OUTPUT_PATH"

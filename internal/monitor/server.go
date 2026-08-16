@@ -139,6 +139,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/system-proxy", s.withAuth(s.handleSystemProxy))
 	mux.HandleFunc("/api/traffic", s.withAuth(s.handleTraffic))
 	mux.HandleFunc("/api/logs", s.withAuth(s.handleLogs))
+	mux.HandleFunc("/routing.pac", s.handleRoutingPAC)
 	s.srv = &http.Server{Addr: cfg.Listen, Handler: mux}
 	return s
 }
@@ -1554,8 +1555,19 @@ func (s *Server) handleRoutingRules(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
+		autoNamed := strings.TrimSpace(rule.Name) == ""
+		if rule.ID == "" {
+			rule.ID = config.NewRoutingRuleID()
+		}
+		if autoNamed {
+			rule.Name = autoRuleName(rule)
+		}
 		for _, existing := range s.cfgSrc.Routing.Rules {
 			if existing.Name == rule.Name {
+				if autoNamed {
+					rule.Name += "-" + truncatedID(rule.ID)
+					break
+				}
 				s.cfgMu.Unlock()
 				w.WriteHeader(http.StatusConflict)
 				writeJSON(w, map[string]any{"error": "规则名称已存在"})
@@ -1586,10 +1598,10 @@ func (s *Server) handleRoutingRules(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRoutingRuleItem(w http.ResponseWriter, r *http.Request) {
 	namePart := strings.TrimPrefix(r.URL.Path, "/api/routing/rules/")
-	name, err := url.PathUnescape(namePart)
-	if err != nil || name == "" {
+	id, err := url.PathUnescape(namePart)
+	if err != nil || id == "" {
 		w.WriteHeader(http.StatusBadRequest)
-		writeJSON(w, map[string]any{"error": "规则名称无效"})
+		writeJSON(w, map[string]any{"error": "规则 id 无效"})
 		return
 	}
 	switch r.Method {
@@ -1605,6 +1617,10 @@ func (s *Server) handleRoutingRuleItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": err.Error()})
 			return
 		}
+		autoNamed := strings.TrimSpace(rule.Name) == ""
+		if autoNamed {
+			rule.Name = autoRuleName(rule)
+		}
 		s.cfgMu.Lock()
 		if s.cfgSrc == nil {
 			s.cfgMu.Unlock()
@@ -1612,16 +1628,28 @@ func (s *Server) handleRoutingRuleItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "配置未初始化"})
 			return
 		}
-		idx := routingRuleIndexLocked(s.cfgSrc.Routing.Rules, name)
+		idx := routingRuleIndexByIDLocked(s.cfgSrc.Routing.Rules, id)
 		if idx == -1 {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusNotFound)
 			writeJSON(w, map[string]any{"error": "规则不存在"})
 			return
 		}
-		oldName := s.cfgSrc.Routing.Rules[idx].Name
+		oldID := s.cfgSrc.Routing.Rules[idx].ID
+		for i, existing := range s.cfgSrc.Routing.Rules {
+			if i != idx && existing.Name == rule.Name {
+				if autoNamed {
+					rule.Name += "-" + truncatedID(id)
+					break
+				}
+				s.cfgMu.Unlock()
+				w.WriteHeader(http.StatusConflict)
+				writeJSON(w, map[string]any{"error": "规则名称已存在"})
+				return
+			}
+		}
 		s.cfgSrc.Routing.Rules[idx] = rule
-		s.cfgSrc.Routing.Rules[idx].Name = oldName
+		s.cfgSrc.Routing.Rules[idx].ID = oldID
 		if err := s.cfgSrc.SaveSettings(); err != nil {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusInternalServerError)
@@ -1645,7 +1673,7 @@ func (s *Server) handleRoutingRuleItem(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"error": "配置未初始化"})
 			return
 		}
-		idx := routingRuleIndexLocked(s.cfgSrc.Routing.Rules, name)
+		idx := routingRuleIndexByIDLocked(s.cfgSrc.Routing.Rules, id)
 		if idx == -1 {
 			s.cfgMu.Unlock()
 			w.WriteHeader(http.StatusNotFound)
@@ -1681,10 +1709,15 @@ func (s *Server) handleRoutingPresets(w http.ResponseWriter, r *http.Request) {
 	categories := routing.Categories()
 	payload := make([]map[string]any, 0, len(categories))
 	for _, c := range categories {
+		sample := ""
+		if len(c.DomainSuffix) > 0 {
+			sample = c.DomainSuffix[0]
+		}
 		payload = append(payload, map[string]any{
-			"id":           c.ID,
-			"name":         c.Name,
-			"domain_count": len(c.DomainSuffix),
+			"id":            c.ID,
+			"name":          c.Name,
+			"domain_count":  len(c.DomainSuffix),
+			"sample_domain": sample,
 		})
 	}
 	writeJSON(w, map[string]any{"categories": payload})
@@ -1838,15 +1871,11 @@ func (s *Server) handleSystemProxy(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"enabled": req.Enabled, "message": "状态未变更"})
 			return
 		}
-		host := s.cfgSrc.Listener.Address
-		port := s.cfgSrc.Listener.Port
-		if host == "" || host == "0.0.0.0" || host == "::" {
-			host = "127.0.0.1"
-		}
+		pacURL := sysproxy.PACURL(s.cfgSrc.Management.Listen)
 		s.cfgMu.Unlock()
 		var err error
 		if req.Enabled {
-			err = proxy.Enable(host, int(port))
+			err = proxy.Enable(pacURL)
 		} else {
 			err = proxy.Disable()
 		}
@@ -1865,25 +1894,66 @@ func (s *Server) handleSystemProxy(w http.ResponseWriter, r *http.Request) {
 }
 
 func validateRoutingRule(rule config.RoutingRule) error {
-	if strings.TrimSpace(rule.Name) == "" {
-		return errors.New("规则名称不能为空")
-	}
 	if strings.TrimSpace(rule.Target) == "" {
 		return errors.New("目标节点不能为空")
 	}
-	if len(rule.DomainSuffix)+len(rule.DomainKeyword)+len(rule.DomainRegex) == 0 && rule.Category == "" {
-		return errors.New("至少需要一个域名匹配条件或规则分类")
+	hasCategory := strings.TrimSpace(rule.Category) != ""
+	hasDomains := len(rule.DomainSuffix)+len(rule.DomainKeyword)+len(rule.DomainRegex) > 0
+	if !hasCategory && !hasDomains {
+		return errors.New("需要选择预设服务或填写自定义域名")
+	}
+	if hasCategory && hasDomains {
+		return errors.New("预设服务与自定义域名只能二选一")
 	}
 	return nil
 }
 
-func routingRuleIndexLocked(rules []config.RoutingRule, name string) int {
+func routingRuleIndexByIDLocked(rules []config.RoutingRule, id string) int {
 	for i, rule := range rules {
-		if rule.Name == name {
+		if rule.ID == id {
 			return i
 		}
 	}
 	return -1
+}
+
+// autoRuleName renders a stable human-readable name when the UI does not
+// provide one. Category rules are named by category plus target; custom rules
+// fall back to their first domain.
+func autoRuleName(rule config.RoutingRule) string {
+	if strings.TrimSpace(rule.Category) != "" {
+		return safeRuleSegment(rule.Category) + "-" + safeRuleSegment(rule.Target)
+	}
+	first := ""
+	if len(rule.DomainSuffix) > 0 {
+		first = rule.DomainSuffix[0]
+	} else if len(rule.DomainKeyword) > 0 {
+		first = rule.DomainKeyword[0]
+	} else if len(rule.DomainRegex) > 0 {
+		first = rule.DomainRegex[0]
+	}
+	return safeRuleSegment(first)
+}
+
+func safeRuleSegment(s string) string {
+	s = strings.TrimSpace(s)
+	var b strings.Builder
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	return strings.Trim(b.String(), "-")
+}
+
+func truncatedID(id string) string {
+	if len(id) <= 4 {
+		return id
+	}
+	return id[len(id)-4:]
 }
 
 func (s *Server) ensureNodeManager(w http.ResponseWriter) bool {

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -81,12 +82,26 @@ func (r RoutingConfig) ChinaDirect() bool {
 
 // RoutingRule maps domain matchers to a named node or region pool.
 type RoutingRule struct {
+	ID            string   `yaml:"id,omitempty" json:"id,omitempty"`
 	Name          string   `yaml:"name" json:"name"`
 	DomainSuffix  []string `yaml:"domain_suffix,omitempty" json:"domain_suffix,omitempty"`
 	DomainKeyword []string `yaml:"domain_keyword,omitempty" json:"domain_keyword,omitempty"`
 	DomainRegex   []string `yaml:"domain_regex,omitempty" json:"domain_regex,omitempty"`
 	Target        string   `yaml:"target" json:"target"`
 	Category      string   `yaml:"category,omitempty" json:"category,omitempty"`
+	Enabled       *bool    `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the rule participates in routing and PAC
+// generation. The default is enabled when the field is absent, preserving old
+// configurations.
+func (r RoutingRule) IsEnabled() bool {
+	return r.Enabled == nil || *r.Enabled
+}
+
+// NewRoutingRuleID returns a URL-safe rule identifier.
+func NewRoutingRuleID() string {
+	return fmt.Sprintf("rule-%08x", rand.Int31())
 }
 
 // ListenerConfig defines how the HTTP/SOCKS5 mixed proxy should listen for clients.
@@ -853,6 +868,17 @@ func (c *Config) normalizeRouting() error {
 	if c.Routing.ChinaDirectEnabled == nil {
 		defaultEnabled := true
 		c.Routing.ChinaDirectEnabled = &defaultEnabled
+	}
+	seenIDs := make(map[string]bool)
+	for i := range c.Routing.Rules {
+		rule := &c.Routing.Rules[i]
+		if rule.ID == "" {
+			rule.ID = NewRoutingRuleID()
+		}
+		if seenIDs[rule.ID] {
+			rule.ID = NewRoutingRuleID()
+		}
+		seenIDs[rule.ID] = true
 	}
 	seen := make(map[string]bool)
 	for i := range c.Routing.Rules {

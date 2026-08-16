@@ -853,49 +853,16 @@
                   <div class="stat-sub">WebUI 热更新</div>
                 </div>
               </div>
-              <div style="display:grid; grid-template-columns: minmax(420px, 1.25fr) minmax(340px, 1fr); gap:16px; margin-top:16px;">
-                <div class="panel">
-                  <div class="panel-header"><div class="panel-title">规则配置</div></div>
-                  <div style="padding:16px; display:grid; gap:12px;">
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-                      <div class="form-group"><label>规则名称</label><input id="routingRuleName" class="setting-input" placeholder="openai-jp" /></div>
-                      <div class="form-group"><label>目标节点</label><select id="routingRuleTarget" class="setting-input"></select></div>
-                    </div>
-                    <div style="display:grid; grid-template-columns: 1fr 2fr; gap:12px;">
-                      <div class="form-group">
-                        <label>匹配类型</label>
-                        <select id="routingRuleType" class="setting-input">
-                          <option value="suffix">域名后缀</option>
-                          <option value="keyword">关键词</option>
-                          <option value="regex">正则</option>
-                        </select>
-                      </div>
-                      <div class="form-group"><label>匹配值（多个用逗号分隔）</label><input id="routingRuleValue" class="setting-input" placeholder="openai.com" /></div>
-                    </div>
-                    <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px;">
-                      <div class="form-group"><label>预设服务</label><select id="routingRulePreset" class="setting-input"><option value="">不使用预设</option></select></div>
-                      <div style="display:flex; align-items:flex-end; justify-content:flex-end; gap:8px;">
-                        <button class="btn btn-sm" onclick="routingRuleAddPreset()">添加预设</button>
-                        <button class="btn btn-primary btn-sm" onclick="routingRuleAdd()">添加规则</button>
-                      </div>
-                    </div>
-                    <div class="table-container">
-                      <table>
-                        <thead><tr><th>名称</th><th>匹配</th><th>目标</th><th>操作</th></tr></thead>
-                        <tbody id="routingRulesTableBody"></tbody>
-                      </table>
-                    </div>
-                  </div>
+              <div class="panel">
+                <div class="panel-header">
+                  <div class="panel-title">规则配置</div>
+                  <button class="btn btn-primary btn-sm" onclick="openRoutingRuleModal()">新增规则</button>
                 </div>
-                <div class="panel">
-                  <div class="panel-header"><div class="panel-title">域名测速</div></div>
-                  <div style="padding:16px; display:grid; gap:12px;">
-                    <div style="display:flex; gap:8px;">
-                      <input id="routingLatencyDomain" class="setting-input" placeholder="example.com" />
-                      <button class="btn btn-primary" onclick="routingRunLatency()">测速</button>
-                    </div>
-                    <div id="routingLatencyResults" style="display:grid; gap:8px; max-height:480px; overflow:auto;"></div>
-                  </div>
+                <div class="table-container">
+                  <table>
+                    <thead><tr><th>启用</th><th>名称</th><th>匹配</th><th>目标</th><th>操作</th></tr></thead>
+                    <tbody id="routingRulesTableBody"></tbody>
+                  </table>
                 </div>
               </div>
             </div>
@@ -904,6 +871,60 @@
   </main>
 
   <!-- Modals -->
+
+  <!-- Routing Rule Modal -->
+  <div class="modal-overlay" id="routingRuleModalOverlay">
+    <div class="modal">
+      <div class="modal-header" id="routingRuleModalTitle">新增规则</div>
+      <form onsubmit="routingRuleSave(event)">
+        <div class="modal-body">
+          <div class="form-group">
+            <label>匹配方式</label>
+            <select id="routingMatchMode" class="setting-input" onchange="routingMatchModeChanged()">
+              <option value="preset">预设服务</option>
+              <option value="custom">自定义域名</option>
+            </select>
+          </div>
+          <div id="routingPresetFields">
+            <div class="form-group">
+              <label>预设服务</label>
+              <select id="routingRulePreset" class="setting-input"><option value="">请选择预设服务</option></select>
+            </div>
+          </div>
+          <div id="routingCustomFields" style="display:none;">
+            <div class="form-group">
+              <label>规则名称（留空自动生成）</label>
+              <input id="routingRuleName" class="setting-input" placeholder="example-com" />
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px;">
+              <div class="form-group">
+                <label>匹配类型</label>
+                <select id="routingRuleType" class="setting-input">
+                  <option value="suffix">域名后缀</option>
+                  <option value="keyword">关键词</option>
+                  <option value="regex">正则</option>
+                </select>
+              </div>
+              <div class="form-group"><label>匹配值（多个用逗号分隔）</label><input id="routingRuleValue" class="setting-input" placeholder="openai.com" /></div>
+            </div>
+          </div>
+          <div style="display:flex; align-items:flex-end; gap:8px;">
+            <div class="form-group" style="flex:1;">
+              <label>目标节点</label>
+              <select id="routingRuleTarget" class="setting-input"></select>
+            </div>
+            <button type="button" class="btn" onclick="routingAutoMatchBestNode()">自动匹配最佳节点</button>
+          </div>
+          <input type="hidden" id="routingRuleEditId" />
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="btn" onclick="closeRoutingRuleModal()">取消</button>
+          <button type="submit" class="btn btn-primary">保存</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
   <!-- Auth Modal -->
   <div class="modal-overlay" id="loginOverlay">
     <div class="modal">
@@ -1075,8 +1096,6 @@
 
     let routingPresets = [];
     let routingRules = [];
-    let routingLatency = {};
-    let routingEditName = '';
 
     async function loadRoutingTab() {
       await Promise.all([loadRoutingRules(), loadRoutingPresets(), loadRoutingTargets(), loadSysProxy()]);
@@ -1096,13 +1115,14 @@
       const tb = document.getElementById('routingRulesTableBody');
       tb.innerHTML = '';
       if (!routingRules.length) {
-        tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:12px;">暂无规则</td></tr>';
+        tb.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:12px;">暂无规则</td></tr>';
         return;
       }
       routingRules.forEach(rule => {
         const match = rule.domain_suffix && rule.domain_suffix.length ? rule.domain_suffix.join(',') : (rule.domain_keyword && rule.domain_keyword.length ? rule.domain_keyword.join(',') : (rule.domain_regex && rule.domain_regex.length ? rule.domain_regex.join(',') : (rule.category || '-')));
+        const enabled = rule.enabled === false ? '' : 'checked';
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${escapeHtml(rule.name)}</td><td style="font-size:11px;">${escapeHtml(match)}</td><td>${escapeHtml(rule.target)}</td><td><button class="btn btn-sm" onclick='routingEditRule(${JSON.stringify(rule.name).replace(/'/g, "&#39;")})'>编辑</button> <button class="btn btn-sm btn-warning" onclick='routingDeleteRule(${JSON.stringify(rule.name).replace(/'/g, "&#39;")})'>删除</button></td>`;
+        tr.innerHTML = `<td><input type="checkbox" ${enabled} onchange="routingToggleRule('${escapeAttrJs(rule.id)}', this.checked)"></td><td>${escapeHtml(rule.name)}</td><td style="font-size:11px;">${escapeHtml(match)}</td><td>${escapeHtml(rule.target)}</td><td><button class="btn btn-sm" onclick="routingEditRule('${escapeAttrJs(rule.id)}')">编辑</button> <button class="btn btn-sm btn-warning" onclick="routingDeleteRule('${escapeAttrJs(rule.id)}')">删除</button></td>`;
         tb.appendChild(tr);
       });
     }
@@ -1118,15 +1138,13 @@
         routingPresets = d.categories || [];
         document.getElementById('routingPresetCount').textContent = routingPresets.length;
         const sel = document.getElementById('routingRulePreset');
-        const old = sel.value;
-        sel.innerHTML = '<option value="">不使用预设</option>';
+        sel.innerHTML = '<option value="">请选择预设服务</option>';
         routingPresets.forEach(c => {
           const opt = document.createElement('option');
           opt.value = c.id;
           opt.textContent = `${c.name} (${c.domain_count})`;
           sel.appendChild(opt);
         });
-        sel.value = old;
       } catch(e) { console.error(e); }
     }
 
@@ -1150,71 +1168,108 @@
       } catch(e) { console.error(e); }
     }
 
-    async function routingRuleAdd() {
-      const name = document.getElementById('routingRuleName').value.trim();
+    function openRoutingRuleModal(rule) {
+      document.getElementById('routingRuleEditId').value = rule ? rule.id : '';
+      document.getElementById('routingRuleModalTitle').textContent = rule ? '编辑规则' : '新增规则';
+      document.getElementById('routingRuleTarget').value = rule ? rule.target || 'proxy-pool' : 'proxy-pool';
+      if (rule && rule.category) {
+        document.getElementById('routingMatchMode').value = 'preset';
+        document.getElementById('routingRulePreset').value = rule.category;
+      } else {
+        document.getElementById('routingMatchMode').value = 'custom';
+        document.getElementById('routingRuleName').value = rule ? rule.name || '' : '';
+        document.getElementById('routingRuleValue').value = rule ? (rule.domain_suffix && rule.domain_suffix.length ? rule.domain_suffix.join(',') : rule.domain_keyword && rule.domain_keyword.length ? rule.domain_keyword.join(',') : rule.domain_regex && rule.domain_regex.length ? rule.domain_regex.join(',') : '') : '';
+        if (rule && (rule.domain_suffix || []).length) document.getElementById('routingRuleType').value = 'suffix';
+        else if (rule && (rule.domain_keyword || []).length) document.getElementById('routingRuleType').value = 'keyword';
+        else if (rule && (rule.domain_regex || []).length) document.getElementById('routingRuleType').value = 'regex';
+      }
+      document.getElementById('routingRulePreset').value = rule && rule.category ? rule.category : '';
+      routingMatchModeChanged();
+      document.getElementById('routingRuleModalOverlay').classList.add('show');
+    }
+
+    function closeRoutingRuleModal() {
+      document.getElementById('routingRuleModalOverlay').classList.remove('show');
+    }
+
+    function routingMatchModeChanged() {
+      const mode = document.getElementById('routingMatchMode').value;
+      document.getElementById('routingPresetFields').style.display = mode === 'preset' ? 'block' : 'none';
+      document.getElementById('routingCustomFields').style.display = mode === 'custom' ? 'block' : 'none';
+    }
+
+    async function routingRuleSave(event) {
+      event.preventDefault();
+      const editId = document.getElementById('routingRuleEditId').value;
       const target = document.getElementById('routingRuleTarget').value;
-      const type = document.getElementById('routingRuleType').value;
-      const value = document.getElementById('routingRuleValue').value.trim();
-      const category = document.getElementById('routingRulePreset').value;
-      if (!name || !target) { showToast('请填写规则名称和目标节点', 'error'); return; }
-      if (!value && !category) { showToast('请填写域名或选择预设服务', 'error'); return; }
-      const payload = { name, target, category: category || '' };
-      if (value) {
+      const mode = document.getElementById('routingMatchMode').value;
+      if (!target) { showToast('请选择目标节点', 'error'); return; }
+      const payload = { target };
+      if (mode === 'preset') {
+        const category = document.getElementById('routingRulePreset').value;
+        if (!category) { showToast('请选择预设服务', 'error'); return; }
+        payload.category = category;
+      } else {
+        const value = document.getElementById('routingRuleValue').value.trim();
+        const name = document.getElementById('routingRuleName').value.trim();
+        if (!value) { showToast('请填写自定义域名', 'error'); return; }
         const list = value.split(',').map(v => v.trim()).filter(Boolean);
         if (!list.length) { showToast('匹配值无效', 'error'); return; }
+        const type = document.getElementById('routingRuleType').value;
         if (type === 'suffix') payload.domain_suffix = list;
         if (type === 'keyword') payload.domain_keyword = list;
         if (type === 'regex') payload.domain_regex = list;
+        if (name) payload.name = name;
       }
-      const editing = routingEditName;
-      const url = editing ? `/api/routing/rules/${encodeURIComponent(editing)}` : '/api/routing/rules';
-      const method = editing ? 'PUT' : 'POST';
+      const url = editId ? `/api/routing/rules/${encodeURIComponent(editId)}` : '/api/routing/rules';
+      const method = editId ? 'PUT' : 'POST';
       const r = await fetch(url, {method, headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
       const d = await r.json();
       if (!r.ok) { showToast(d.error || '保存失败', 'error'); return; }
-      routingEditName = '';
-      document.getElementById('routingRuleName').value = '';
-      document.getElementById('routingRuleValue').value = '';
-      document.getElementById('routingRulePreset').value = '';
+      closeRoutingRuleModal();
       showToast(d.message || '规则已生效');
       await loadRoutingRules();
     }
 
-    function routingEditRule(name) {
-      const rule = routingRules.find(r => r.name === name);
+    function routingEditRule(id) {
+      const rule = routingRules.find(r => r.id === id);
       if (!rule) return;
-      routingEditName = name;
-      document.getElementById('routingRuleName').value = rule.name;
-      document.getElementById('routingRuleTarget').value = rule.target;
-      document.getElementById('routingRulePreset').value = rule.category || '';
-      if ((rule.domain_suffix || []).length) { document.getElementById('routingRuleType').value='suffix'; document.getElementById('routingRuleValue').value = rule.domain_suffix.join(','); }
-      else if ((rule.domain_keyword || []).length) { document.getElementById('routingRuleType').value='keyword'; document.getElementById('routingRuleValue').value = rule.domain_keyword.join(','); }
-      else if ((rule.domain_regex || []).length) { document.getElementById('routingRuleType').value='regex'; document.getElementById('routingRuleValue').value = rule.domain_regex.join(','); }
-      else { document.getElementById('routingRuleValue').value = ''; }
+      openRoutingRuleModal(rule);
     }
 
-    async function routingRuleAddPreset() {
-      const category = document.getElementById('routingRulePreset').value;
-      const target = document.getElementById('routingRuleTarget').value;
-      if (!category) { showToast('请先选择预设服务', 'error'); return; }
-      const preset = routingPresets.find(c => c.id === category);
-      const name = category + (target ? '-' + target.replace(/[^A-Za-z0-9_-]/g,'') : '');
-      const r = await fetch('/api/routing/rules', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({name, category, target})});
+    async function routingDeleteRule(id) {
+      const r = await fetch(`/api/routing/rules/${encodeURIComponent(id)}`, {method:'DELETE'});
       const d = await r.json();
-      showToast(d.error || '预设规则已生效', r.ok ? 'success' : 'error');
+      showToast(d.error || '规则已删除', r.ok ? 'success' : 'error');
       if (r.ok) loadRoutingRules();
     }
 
-    async function routingDeleteRule(name) {
-      const r = await fetch(`/api/routing/rules/${encodeURIComponent(name)}`, {method:'DELETE'});
+    async function routingToggleRule(id, enabled) {
+      const rule = routingRules.find(r => r.id === id);
+      if (!rule) return;
+      const payload = Object.assign({}, rule, {enabled});
+      const r = await fetch(`/api/routing/rules/${encodeURIComponent(id)}`, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
       const d = await r.json();
-      showToast(d.error || '规则已生效', r.ok ? 'success' : 'error');
-      if (r.ok) loadRoutingRules();
+      if (!r.ok) {
+        showToast(d.error || '启停失败', 'error');
+        await loadRoutingRules();
+        return;
+      }
+      showToast(enabled ? '规则已启用' : '规则已停用');
+      await loadRoutingRules();
     }
 
-    async function routingRunLatency() {
-      const domain = document.getElementById('routingLatencyDomain').value.trim().toLowerCase();
-      if (!domain) { showToast('请输入域名', 'error'); return; }
+    async function routingAutoMatchBestNode() {
+      const mode = document.getElementById('routingMatchMode').value;
+      let domain = '';
+      if (mode === 'preset') {
+        const category = document.getElementById('routingRulePreset').value;
+        const preset = routingPresets.find(c => c.id === category);
+        domain = preset ? preset.sample_domain || '' : '';
+      } else {
+        domain = document.getElementById('routingRuleValue').value.trim().split(',')[0].trim().toLowerCase();
+      }
+      if (!domain) { showToast('请先选择预设或填写匹配域名', 'error'); return; }
       showToast('测速中，请稍候');
       try {
         const r = await fetch('/api/routing/latency-test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({domain})});
@@ -1223,39 +1278,25 @@
         text.split('\n').filter(l => l.startsWith('data: ')).forEach(l => {
           try { results.push(JSON.parse(l.slice(6))); } catch(e){}
         });
-        routingLatency[domain] = results.filter(x => x.type === 'progress');
-        renderRoutingLatency();
+        const ok = results.filter(x => x.type === 'progress' && x.status === 'success' && x.latency >= 0).sort((a,b) => a.latency - b.latency);
+        if (!ok.length) { showToast('没有可用节点', 'error'); return; }
+        const best = ok[0];
+        routingSetTarget(best.tag, best.name, best.latency);
+        showToast(`已选择 ${best.name || best.tag} (${best.latency}ms)`);
       } catch(e) { showToast('测速失败: ' + e.message, 'error'); }
     }
 
-    function renderRoutingLatency() {
-      const wrap = document.getElementById('routingLatencyResults');
-      wrap.innerHTML = '';
-      Object.entries(routingLatency).forEach(([domain, results]) => {
-        const ok = results.filter(r => r.status === 'success');
-        const fail = results.length - ok.length;
-        const fastest = ok.length ? Math.min(...ok.map(r => r.latency)) : -1;
-        const card = document.createElement('div');
-        card.className = 'stat-panel';
-        card.style.cursor = 'pointer';
-        card.innerHTML = `<div style="display:flex; align-items:center; gap:10px;"><span class="status-dot" style="background:${ok.length?'var(--success)':'var(--error)'};"></span><div><div style="font-size:14px; font-weight:600; color:var(--text-main);">${escapeHtml(domain)}</div><div style="font-size:11px; color:var(--text-muted);">${ok.length} 可达 / ${fail} 不可达${fastest>=0 ? ' · 最快 '+fastest+'ms' : ''}</div></div></div><div style="font-size:16px; color:${ok.length?'var(--success)':'var(--error)'};">${ok.length?'✓':'✗'}</div>`;
-        card.addEventListener('click', () => {
-          const detail = document.createElement('div');
-          detail.style.cssText = 'grid-column:1/-1;';
-          detail.innerHTML = `<table><thead><tr><th>节点</th><th>延迟</th><th>状态</th><th></th></tr></thead><tbody>${results.map(r => `<tr><td>${escapeHtml(r.name || r.tag)}</td><td>${r.latency >= 0 ? r.latency+'ms' : '-'}</td><td style="color:${r.status==='success'?'var(--success)':'var(--error)'};">${r.status==='success'?'可达':escapeHtml(r.error||'不可达')}</td><td><button class="btn btn-sm" onclick='routingUseLatencyNode(${JSON.stringify(r.tag)}, ${JSON.stringify(domain)})'>使用此节点</button></td></tr>`).join('')}</tbody></table>`;
-          wrap.parentElement.insertBefore(detail, wrap.nextSibling);
-          setTimeout(() => detail.remove(), 8000);
-        });
-        wrap.appendChild(card);
-      });
-    }
-
-    function routingUseLatencyNode(tag, domain) {
-      document.getElementById('routingRuleTarget').value = tag;
-      document.getElementById('routingRuleName').value = domain.replace(/[^A-Za-z0-9_.-]/g, '-');
-      document.getElementById('routingRuleType').value = 'suffix';
-      document.getElementById('routingRuleValue').value = domain;
-      showToast('已填入规则表单');
+    function routingSetTarget(tag, name, latency) {
+      const sel = document.getElementById('routingRuleTarget');
+      let found = false;
+      for (const opt of sel.options) { if (opt.value === tag) { found = true; break; } }
+      if (!found) {
+        const opt = document.createElement('option');
+        opt.value = tag;
+        opt.textContent = `${name || tag} (${tag})`;
+        sel.appendChild(opt);
+      }
+      sel.value = tag;
     }
 
     async function loadSysProxy() {

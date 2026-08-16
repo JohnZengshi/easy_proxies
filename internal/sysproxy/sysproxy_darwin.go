@@ -5,14 +5,13 @@ package sysproxy
 import (
 	"fmt"
 	"os/exec"
-	"strconv"
 	"strings"
 )
 
 type darwinProxy struct {
 	baseProxy
 	services  []string
-	original  map[string]map[string]proxyState
+	original  map[string]autoProxyState
 	appliedTo []string
 }
 
@@ -20,13 +19,12 @@ func newPlatformProxy() Proxy {
 	return &darwinProxy{}
 }
 
-type proxyState struct {
+type autoProxyState struct {
 	Enabled bool
-	Host    string
-	Port    string
+	URL     string
 }
 
-func (p *darwinProxy) Enable(host string, port int) error {
+func (p *darwinProxy) Enable(pacURL string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.enabled {
@@ -47,32 +45,23 @@ func (p *darwinProxy) Enable(host string, port int) error {
 	if len(services) == 0 {
 		return fmt.Errorf("no macOS network services found")
 	}
-	original := make(map[string]map[string]proxyState)
+	original := make(map[string]autoProxyState)
 	for _, svc := range services {
-		original[svc] = map[string]proxyState{
-			"web":    readProxyState(svc, "-getwebproxy"),
-			"secure": readProxyState(svc, "-getsecurewebproxy"),
-			"socks":  readProxyState(svc, "-getsocksfirewallproxy"),
-		}
+		original[svc] = readAutoProxyState(svc)
 	}
-	portStr := strconv.Itoa(port)
-	for _, svc := range services {
-		if err := exec.Command("networksetup", "-setwebproxy", svc, host, portStr).Run(); err != nil {
-			return fmt.Errorf("set web proxy %s: %w", svc, err)
-		}
-		if err := exec.Command("networksetup", "-setsecurewebproxy", svc, host, portStr).Run(); err != nil {
-			return fmt.Errorf("set secure proxy %s: %w", svc, err)
-		}
-		if err := exec.Command("networksetup", "-setsocksfirewallproxy", svc, host, portStr).Run(); err != nil {
-			return fmt.Errorf("set socks proxy %s: %w", svc, err)
+	for i, svc := range services {
+		if err := exec.Command("networksetup", "-setautoproxyurl", svc, pacURL).Run(); err != nil {
+			for _, done := range services[:i] {
+				restoreAutoProxy(done, original[done])
+			}
+			return fmt.Errorf("set auto proxy %s: %w", svc, err)
 		}
 	}
 	p.services = services
 	p.original = original
 	p.appliedTo = append([]string(nil), services...)
 	p.enabled = true
-	p.host = host
-	p.port = port
+	p.pacURL = pacURL
 	return nil
 }
 
@@ -85,17 +74,9 @@ func (p *darwinProxy) Disable() error {
 	var firstErr error
 	for _, svc := range p.appliedTo {
 		state := p.original[svc]
-		if state == nil {
-			svcState := readProxyState(svc, "-getwebproxy")
-			state = map[string]proxyState{
-				"web":    svcState,
-				"secure": readProxyState(svc, "-getsecurewebproxy"),
-				"socks":  readProxyState(svc, "-getsocksfirewallproxy"),
-			}
+		if err := restoreAutoProxy(svc, state); err != nil && firstErr == nil {
+			firstErr = err
 		}
-		restoreProxy(svc, "web", state["web"], "-setwebproxy", "-setwebproxystate")
-		restoreProxy(svc, "secure", state["secure"], "-setsecurewebproxy", "-setsecurewebproxystate")
-		restoreProxy(svc, "socks", state["socks"], "-setsocksfirewallproxy", "-setsocksfirewallproxystate")
 	}
 	p.appliedTo = nil
 	p.original = nil
@@ -103,37 +84,33 @@ func (p *darwinProxy) Disable() error {
 	return firstErr
 }
 
-func readProxyState(service, flag string) proxyState {
-	out, err := exec.Command("networksetup", flag, service).Output()
+func readAutoProxyState(service string) autoProxyState {
+	out, err := exec.Command("networksetup", "-getautoproxyurl", service).Output()
 	if err != nil {
-		return proxyState{}
+		return autoProxyState{}
 	}
-	var st proxyState
+	var st autoProxyState
 	for _, line := range strings.Split(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "Enabled:") {
 			st.Enabled = strings.Contains(strings.ToLower(line), "yes")
 		}
-		if strings.HasPrefix(line, "Server:") {
-			st.Host = strings.TrimSpace(strings.TrimPrefix(line, "Server:"))
-		}
-		if strings.HasPrefix(line, "Port:") {
-			st.Port = strings.TrimSpace(strings.TrimPrefix(line, "Port:"))
+		if strings.HasPrefix(line, "URL:") {
+			st.URL = strings.TrimSpace(strings.TrimPrefix(line, "URL:"))
+			if st.URL == "(null)" {
+				st.URL = ""
+			}
 		}
 	}
 	return st
 }
 
-func restoreProxy(service, kind string, st proxyState, setServerFlag, setStateFlag string) {
-	if st.Host != "" && st.Port != "" {
-		if err := exec.Command("networksetup", setServerFlag, service, st.Host, st.Port).Run(); err != nil {
-			_ = err
-			return
-		}
+func restoreAutoProxy(service string, state autoProxyState) error {
+	if state.URL != "" {
+		return exec.Command("networksetup", "-setautoproxyurl", service, state.URL).Run()
 	}
-	stateArg := "off"
-	if st.Enabled {
-		stateArg = "on"
+	if err := exec.Command("networksetup", "-setautoproxyurl", service, "(null)").Run(); err != nil {
+		return err
 	}
-	_ = exec.Command("networksetup", setStateFlag, service, stateArg).Run()
+	return exec.Command("networksetup", "-setautoproxystate", service, "off").Run()
 }

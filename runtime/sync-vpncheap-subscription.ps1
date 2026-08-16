@@ -88,9 +88,13 @@ function Resolve-SubscriptionUrl([string]$StatePath) {
     return $url
 }
 
-function New-DirectConfig([string]$Url) {
+function New-DirectConfig([string]$Url, [string]$ExistingContent = '') {
     $escaped = $Url.Replace('\', '\\').Replace('"', '\"')
-    return @"
+    $routingBlock = ''
+    if ($ExistingContent -match '(?ms)^routing:.*?(?=^\S|\z)') {
+        $routingBlock = $Matches[0].TrimEnd("`r", "`n")
+    }
+    $config = @"
 mode: hybrid
 log_level: info
 
@@ -141,6 +145,10 @@ subscription_refresh:
   drain_timeout: 30s
   min_available_nodes: 1
 "@
+    if ($routingBlock -ne '') {
+        $config += "`n$routingBlock`n"
+    }
+    return $config
 }
 
 try {
@@ -149,7 +157,11 @@ try {
     }
 
     $url = Resolve-SubscriptionUrl $StatePath
-    $content = New-DirectConfig $url
+    $existing = ''
+    if (Test-Path -LiteralPath $OutputPath -PathType Leaf) {
+        $existing = Get-Content -LiteralPath $OutputPath -Raw
+    }
+    $content = New-DirectConfig $url $existing
     Write-ProtectedConfig $OutputPath $content
     Write-Host 'VPNCheap subscription resolved and direct config generated'
 } catch {
