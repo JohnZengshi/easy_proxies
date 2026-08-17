@@ -22,7 +22,7 @@ func main() {
 	var configPath string
 	var systemProxy bool
 	flag.StringVar(&configPath, "config", "config.yaml", "path to config file")
-	flag.BoolVar(&systemProxy, "system-proxy", false, "enable OS-level system proxy for macOS/Windows")
+	flag.BoolVar(&systemProxy, "system-proxy", defaultSystemProxy(), "enable OS-level system proxy for macOS/Windows")
 	flag.Parse()
 
 	var cfg *config.Config

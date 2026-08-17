@@ -132,6 +132,7 @@ func NewServer(cfg Config, mgr *Manager, logger *log.Logger) *Server {
 	mux.HandleFunc("/api/subscription/refresh", s.withAuth(s.handleSubscriptionRefresh))
 	mux.HandleFunc("/api/subscription/config", s.withAuth(s.handleSubscriptionConfig))
 	mux.HandleFunc("/api/reload", s.withAuth(s.handleReload))
+	mux.HandleFunc("/api/routing/fallback", s.withAuth(s.handleRoutingFallback))
 	mux.HandleFunc("/api/routing/rules", s.withAuth(s.handleRoutingRules))
 	mux.HandleFunc("/api/routing/rules/", s.withAuth(s.handleRoutingRuleItem))
 	mux.HandleFunc("/api/routing/presets", s.withAuth(s.handleRoutingPresets))
@@ -1596,6 +1597,61 @@ func (s *Server) handleRoutingRules(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func (s *Server) handleRoutingFallback(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.cfgMu.RLock()
+		fallback := config.RoutingFallbackDirect
+		if s.cfgSrc != nil {
+			fallback = s.cfgSrc.Routing.FallbackOrDefault()
+		}
+		s.cfgMu.RUnlock()
+		writeJSON(w, map[string]any{"fallback": fallback})
+	case http.MethodPut:
+		var req struct {
+			Fallback string `json:"fallback"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "请求格式错误"})
+			return
+		}
+		fallback := strings.TrimSpace(req.Fallback)
+		if fallback != config.RoutingFallbackDirect && fallback != config.RoutingFallbackProxyPool {
+			w.WriteHeader(http.StatusBadRequest)
+			writeJSON(w, map[string]any{"error": "routing fallback 无效"})
+			return
+		}
+		s.cfgMu.Lock()
+		if s.cfgSrc == nil {
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusServiceUnavailable)
+			writeJSON(w, map[string]any{"error": "配置未初始化"})
+			return
+		}
+		old := s.cfgSrc.Routing.FallbackOrDefault()
+		s.cfgSrc.Routing.Fallback = fallback
+		if err := s.cfgSrc.SaveSettings(); err != nil {
+			s.cfgSrc.Routing.Fallback = old
+			s.cfgMu.Unlock()
+			w.WriteHeader(http.StatusInternalServerError)
+			writeJSON(w, map[string]any{"error": err.Error()})
+			return
+		}
+		s.cfgMu.Unlock()
+		if s.nodeMgr != nil {
+			if err := s.nodeMgr.TriggerReload(r.Context()); err != nil {
+				w.WriteHeader(http.StatusInternalServerError)
+				writeJSON(w, map[string]any{"error": "回退策略已保存，热重载失败: " + err.Error()})
+				return
+			}
+		}
+		writeJSON(w, map[string]any{"fallback": fallback, "message": "回退策略已生效"})
+	default:
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
 func (s *Server) handleRoutingRuleItem(w http.ResponseWriter, r *http.Request) {
 	namePart := strings.TrimPrefix(r.URL.Path, "/api/routing/rules/")
 	id, err := url.PathUnescape(namePart)
@@ -1871,11 +1927,11 @@ func (s *Server) handleSystemProxy(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, map[string]any{"enabled": req.Enabled, "message": "状态未变更"})
 			return
 		}
-		pacURL := sysproxy.PACURL(s.cfgSrc.Management.Listen)
+		target := sysproxy.SystemProxyTarget(s.cfgSrc.Management.Listen, s.cfgSrc.Listener.Address, s.cfgSrc.Listener.Port)
 		s.cfgMu.Unlock()
 		var err error
 		if req.Enabled {
-			err = proxy.Enable(pacURL)
+			err = proxy.Enable(target)
 		} else {
 			err = proxy.Disable()
 		}

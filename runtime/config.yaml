@@ -30,3 +30,6 @@ management:
   listen: "127.0.0.1:9091"
 
 nodes_file: nodes.txt
+
+routing:
+  fallback: direct

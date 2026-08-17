@@ -320,10 +320,17 @@
       cursor: pointer;
       transition: all 0.2s;
     }
-    .checkbox-row:hover { border-color: var(--primary); }
-    .checkbox-row input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; margin: 0; }
-    .checkbox-row label { margin: 0; cursor: pointer; font-size: 13px; color: var(--text-main); }
-    .checkbox-grid {
+.checkbox-row:hover { border-color: var(--primary); }
+.checkbox-row input[type="checkbox"] { width: 16px; height: 16px; cursor: pointer; margin: 0; }
+.checkbox-row label { margin: 0; cursor: pointer; font-size: 13px; color: var(--text-main); }
+.rule-switch { position: relative; display: inline-block; width: 36px; height: 20px; vertical-align: middle; }
+.rule-switch input { opacity: 0; width: 0; height: 0; }
+.rule-switch .track { position: absolute; inset: 0; border: 1px solid var(--border); border-radius: 999px; background: var(--bg-hover); cursor: pointer; transition: background 0.2s, border-color 0.2s; }
+.rule-switch .track::before { position: absolute; content: ""; width: 14px; height: 14px; left: 2px; top: 2px; border-radius: 50%; background: var(--text-muted); transition: transform 0.2s, background 0.2s; }
+.rule-switch input:checked + .track { background: var(--primary); border-color: var(--primary); }
+.rule-switch input:checked + .track::before { transform: translateX(16px); background: #fff; }
+.rule-switch input:focus-visible + .track { outline: 2px solid var(--primary); outline-offset: 2px; }
+.checkbox-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
       margin-bottom: 16px;
     }
@@ -832,8 +839,11 @@
               <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
                 <div style="font-size:20px; font-weight:700; color:var(--text-main);">分流规则</div>
                 <div style="display:flex; gap:10px; align-items:center; color:var(--text-muted); font-size:13px;">
-                  <span id="routingSysProxyState">系统代理未初始化</span>
-                  <button class="btn btn-sm" onclick="toggleRoutingSystemProxy()">切换系统代理</button>
+                  <label for="routingFallback">未命中流量</label>
+                  <select id="routingFallback" class="setting-input" style="width:auto;" onchange="routingFallbackChanged(this)">
+                    <option value="direct">直连</option>
+                    <option value="proxy-pool">默认代理池</option>
+                  </select>
                 </div>
               </div>
               <div class="overview-grid">
@@ -860,7 +870,7 @@
                 </div>
                 <div class="table-container">
                   <table>
-                    <thead><tr><th>启用</th><th>名称</th><th>匹配</th><th>目标</th><th>操作</th></tr></thead>
+                    <thead><tr><th>名称</th><th>匹配</th><th>目标</th><th>操作</th></tr></thead>
                     <tbody id="routingRulesTableBody"></tbody>
                   </table>
                 </div>
@@ -1098,7 +1108,7 @@
     let routingRules = [];
 
     async function loadRoutingTab() {
-      await Promise.all([loadRoutingRules(), loadRoutingPresets(), loadRoutingTargets(), loadSysProxy()]);
+      await Promise.all([loadRoutingRules(), loadRoutingPresets(), loadRoutingTargets(), loadRoutingFallback()]);
     }
 
     async function loadRoutingRules() {
@@ -1115,14 +1125,16 @@
       const tb = document.getElementById('routingRulesTableBody');
       tb.innerHTML = '';
       if (!routingRules.length) {
-        tb.innerHTML = '<tr><td colspan="5" style="text-align:center; color:var(--text-muted); padding:12px;">暂无规则</td></tr>';
+        tb.innerHTML = '<tr><td colspan="4" style="text-align:center; color:var(--text-muted); padding:12px;">暂无规则</td></tr>';
         return;
       }
       routingRules.forEach(rule => {
         const match = rule.domain_suffix && rule.domain_suffix.length ? rule.domain_suffix.join(',') : (rule.domain_keyword && rule.domain_keyword.length ? rule.domain_keyword.join(',') : (rule.domain_regex && rule.domain_regex.length ? rule.domain_regex.join(',') : (rule.category || '-')));
         const enabled = rule.enabled === false ? '' : 'checked';
+        const ariaChecked = rule.enabled === false ? 'false' : 'true';
+        const switchLabel = `启用规则 ${rule.name}`;
         const tr = document.createElement('tr');
-        tr.innerHTML = `<td><input type="checkbox" ${enabled} onchange="routingToggleRule('${escapeAttrJs(rule.id)}', this.checked)"></td><td>${escapeHtml(rule.name)}</td><td style="font-size:11px;">${escapeHtml(match)}</td><td>${escapeHtml(rule.target)}</td><td><button class="btn btn-sm" onclick="routingEditRule('${escapeAttrJs(rule.id)}')">编辑</button> <button class="btn btn-sm btn-warning" onclick="routingDeleteRule('${escapeAttrJs(rule.id)}')">删除</button></td>`;
+        tr.innerHTML = `<td>${escapeHtml(rule.name)}</td><td style="font-size:11px;">${escapeHtml(match)}</td><td>${escapeHtml(rule.target)}</td><td><label class="rule-switch"><input type="checkbox" role="switch" aria-label="${escapeAttrJs(switchLabel)}" aria-checked="${ariaChecked}" ${enabled} onchange="this.setAttribute('aria-checked', this.checked ? 'true' : 'false'); routingToggleRule('${escapeAttrJs(rule.id)}', this.checked)"><span class="track" aria-hidden="true"></span></label> <button class="btn btn-sm" onclick="routingEditRule('${escapeAttrJs(rule.id)}')">编辑</button> <button class="btn btn-sm btn-warning" onclick="routingDeleteRule('${escapeAttrJs(rule.id)}')">删除</button></td>`;
         tb.appendChild(tr);
       });
     }
@@ -1204,7 +1216,8 @@
       const target = document.getElementById('routingRuleTarget').value;
       const mode = document.getElementById('routingMatchMode').value;
       if (!target) { showToast('请选择目标节点', 'error'); return; }
-      const payload = { target };
+      const existing = editId ? routingRules.find(r => r.id === editId) : null;
+      const payload = { target, enabled: existing ? existing.enabled !== false : true };
       if (mode === 'preset') {
         const category = document.getElementById('routingRulePreset').value;
         if (!category) { showToast('请选择预设服务', 'error'); return; }
@@ -1299,26 +1312,29 @@
       sel.value = tag;
     }
 
-    async function loadSysProxy() {
+    async function loadRoutingFallback() {
       try {
-        const r = await fetch('/api/system-proxy');
+        const r = await fetch('/api/routing/fallback');
         const d = await r.json();
-        const el = document.getElementById('routingSysProxyState');
-        if (!d.supported) { el.textContent = '当前平台不支持系统代理'; return; }
-        el.textContent = d.enabled ? '系统代理已开启' : '系统代理已关闭';
+        document.getElementById('routingFallback').value = d.fallback === 'proxy-pool' ? 'proxy-pool' : 'direct';
       } catch(e) { console.error(e); }
     }
 
-    async function toggleRoutingSystemProxy() {
+    async function routingFallbackChanged(sel) {
+      const previous = sel.value === 'proxy-pool' ? 'direct' : 'proxy-pool';
       try {
-        const g = await fetch('/api/system-proxy');
-        const d = await g.json();
-        if (!d.supported) { showToast('当前平台不支持系统代理', 'error'); return; }
-        const r = await fetch('/api/system-proxy', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: !d.enabled})});
-        const res = await r.json();
-        showToast(res.error || res.message, r.ok ? 'success' : 'error');
-        loadSysProxy();
-      } catch(e) { showToast('切换失败: ' + e.message, 'error'); }
+        const r = await fetch('/api/routing/fallback', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fallback: sel.value})});
+        const d = await r.json();
+        if (!r.ok) {
+          showToast(d.error || '保存失败', 'error');
+          sel.value = previous;
+          return;
+        }
+        showToast(d.message || '回退策略已生效');
+      } catch(e) {
+        showToast('保存失败: ' + e.message, 'error');
+        sel.value = previous;
+      }
     }
 
     function getQualityWidth(ms) {

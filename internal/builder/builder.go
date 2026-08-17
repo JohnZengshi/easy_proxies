@@ -222,6 +222,13 @@ func Build(cfg *config.Config) (option.Options, error) {
 			Tag:  directTag,
 		})
 	}
+	const directFallbackTag = "direct-fallback"
+	if cfg.Routing.FallbackOrDefault() == config.RoutingFallbackDirect {
+		outbounds = append(outbounds, option.Outbound{
+			Type: C.TypeDirect,
+			Tag:  directFallbackTag,
+		})
+	}
 
 	// Custom domain rules have highest priority, above inbound routing and the
 	// china-direct shortcut. They are assembled before route.Rules is finalized.
@@ -256,7 +263,11 @@ func Build(cfg *config.Config) (option.Options, error) {
 			Tag:     poolout.Tag,
 			Options: &poolOptions,
 		})
-		route.Final = poolout.Tag
+		if cfg.Routing.FallbackOrDefault() == config.RoutingFallbackDirect {
+			route.Final = directFallbackTag
+		} else {
+			route.Final = poolout.Tag
+		}
 
 		// Build dedicated sticky entry: same node pool, but clients are pinned
 		// to a single node by source IP. Coexists with the non-sticky entry.

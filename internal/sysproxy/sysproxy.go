@@ -3,6 +3,7 @@ package sysproxy
 import (
 	"net"
 	"runtime"
+	"strconv"
 	"sync"
 )
 
@@ -24,9 +25,22 @@ func PACURL(managementListen string) string {
 	return "http://" + net.JoinHostPort(host, port) + "/routing.pac"
 }
 
+// SystemProxyTarget returns the platform-specific value consumed by Proxy.Enable.
+// Windows uses a static local proxy so browser routing does not depend on PAC cache.
+func SystemProxyTarget(managementListen, listenerAddress string, listenerPort uint16) string {
+	if runtime.GOOS != "windows" {
+		return PACURL(managementListen)
+	}
+	host := listenerAddress
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, strconv.Itoa(int(listenerPort)))
+}
+
 // Proxy controls the operating-system-level proxy settings.
 type Proxy interface {
-	Enable(pacURL string) error
+	Enable(target string) error
 	Disable() error
 }
 

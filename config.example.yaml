@@ -123,8 +123,10 @@ geoip:
 # ───────────────────────────────────────────────────────────────
 # china_direct_enabled: 内置 geosite-cn 快照中的域名/IP 直连，默认 true。
 # rules: 每条规则把指定域名路由到节点 tag 或 pool-<region>。
-# 优先级：自定义 rules > 境内直连 > 默认代理池（route.final）。
+# fallback: 未命中任何启用规则的流量去向，direct 直连，proxy-pool 默认代理池。
+# 优先级：启用规则 > 境内直连 > fallback。
 routing:
+  fallback: direct
   china_direct_enabled: true
   rules:
     - name: openai

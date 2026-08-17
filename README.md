@@ -352,8 +352,11 @@ Supports Base64, plain text, and Clash YAML formats. When subscriptions are conf
 The WebUI includes a **Routing Rules** tab for managing per-domain node rules,
 choosing from embedded open-source service categories, and running domain
 latency tests across all healthy nodes. Rules take effect immediately without
-a process restart. macOS/Windows users can enable the system proxy from the UI
-or with `--system-proxy`; system settings are restored on shutdown.
+a process restart. Each rule can be enabled independently; unmatched traffic
+can be sent direct or through the default proxy pool. On Windows the PAC-backed
+system proxy is enabled by default and only manages the PAC `AutoConfigURL`.
+On macOS it remains opt-in through `--system-proxy`. No TUN traffic capture is
+used.
 
 Access at `http://your-server:9091` (configurable via the `management` section).
 
@@ -386,6 +389,8 @@ When `management.password` is empty, authentication is bypassed.
 | `/api/subscription/refresh` | POST | Trigger manual refresh |
 | `/api/nodes/config` | GET, POST, PUT, DELETE | CRUD for node config |
 | `/api/reload` | POST | Reload sing-box instance |
+| `/api/routing/rules` | GET, POST, PUT, DELETE | Read/update routing rules |
+| `/api/routing/fallback` | GET, PUT | Choose direct or default pool for unmatched traffic |
 
 ### Export to sing-box / Mihomo
 

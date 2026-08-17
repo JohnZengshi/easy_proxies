@@ -1,6 +1,9 @@
 package sysproxy
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestPACURL(t *testing.T) {
 	got := PACURL("0.0.0.0:9091")
@@ -12,6 +15,17 @@ func TestPACURL(t *testing.T) {
 	want = "http://127.0.0.1:9191/routing.pac"
 	if got != want {
 		t.Fatalf("PACURL() = %q, want %q", got, want)
+	}
+}
+
+func TestSystemProxyTarget(t *testing.T) {
+	got := SystemProxyTarget("0.0.0.0:9091", "0.0.0.0", 2323)
+	want := "http://127.0.0.1:9091/routing.pac"
+	if runtime.GOOS == "windows" {
+		want = "127.0.0.1:2323"
+	}
+	if got != want {
+		t.Fatalf("SystemProxyTarget() = %q, want %q", got, want)
 	}
 }
 

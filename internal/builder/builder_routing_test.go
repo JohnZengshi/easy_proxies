@@ -1,6 +1,7 @@
 package builder
 
 import (
+	"slices"
 	"testing"
 
 	"easy_proxies/internal/config"
@@ -65,6 +66,28 @@ func TestBuildRoutingSkipsDisabledRules(t *testing.T) {
 	}
 }
 
+func TestBuildRoutingAnthropicCheckerTarget(t *testing.T) {
+	enabled := true
+	cfg := &config.Config{
+		Routing: config.RoutingConfig{
+			Rules: []config.RoutingRule{
+				{Name: "anthropic", Category: "anthropic", Target: "tw-1-udp", Enabled: &enabled},
+			},
+		},
+	}
+	rules := buildRoutingRules(cfg, []string{"tw-1-udp"})
+	if len(rules) != 1 {
+		t.Fatalf("rules len = %d, want 1", len(rules))
+	}
+	rule := rules[0].DefaultOptions
+	if got := rule.RuleAction.RouteOptions.Outbound; got != "tw-1-udp" {
+		t.Fatalf("outbound = %q, want tw-1-udp", got)
+	}
+	if !slices.Contains([]string(rule.RawDefaultRule.DomainSuffix), "ip.net.coffee") {
+		t.Fatalf("Anthropic domains missing ip.net.coffee: %v", rule.RawDefaultRule.DomainSuffix)
+	}
+}
+
 func TestBuildIncludesDirectChina(t *testing.T) {
 	cfg := &config.Config{
 		Mode:  "pool",
@@ -86,5 +109,76 @@ func TestBuildIncludesDirectChina(t *testing.T) {
 		}
 	} else {
 		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuildRoutingFallbackFinal(t *testing.T) {
+	cfg := &config.Config{
+		Mode:  "pool",
+		Nodes: []config.NodeConfig{{Name: "n", URI: "ss://YWVzLTI1Ni1nY206cGFzcw==@127.0.0.1:8388"}},
+		Routing: config.RoutingConfig{
+			Fallback:           config.RoutingFallbackDirect,
+			ChinaDirectEnabled: func() *bool { v := false; return &v }(),
+		},
+	}
+	opts, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if opts.Route == nil {
+		t.Fatal("expected route options")
+	}
+	if opts.Route.Final != "direct-fallback" {
+		t.Fatalf("route.final = %q, want direct-fallback", opts.Route.Final)
+	}
+	foundDirect := false
+	for _, ob := range opts.Outbounds {
+		if ob.Tag == "direct-fallback" && ob.Type == C.TypeDirect {
+			foundDirect = true
+		}
+	}
+	if !foundDirect {
+		t.Fatal("expected direct-fallback outbound")
+	}
+
+	cfg.Routing.Fallback = config.RoutingFallbackProxyPool
+	opts, err = Build(cfg)
+	if err != nil {
+		t.Fatalf("Build(proxy-pool): %v", err)
+	}
+	if opts.Route == nil || opts.Route.Final != "proxy-pool" {
+		t.Fatalf("route.final = %q, want proxy-pool", opts.Route.Final)
+	}
+}
+
+func TestBuildRoutingEnabledRuleOverridesDirectFallback(t *testing.T) {
+	enabled := true
+	disabled := false
+	cfg := &config.Config{
+		Mode:  "pool",
+		Nodes: []config.NodeConfig{{Name: "n", URI: "ss://YWVzLTI1Ni1nY206cGFzcw==@127.0.0.1:8388"}},
+		Routing: config.RoutingConfig{
+			Fallback: config.RoutingFallbackDirect,
+			Rules: []config.RoutingRule{
+				{Name: "on", DomainSuffix: []string{"on.example.com"}, Target: "n", Enabled: &enabled},
+				{Name: "off", DomainSuffix: []string{"off.example.com"}, Target: "n", Enabled: &disabled},
+			},
+		},
+	}
+	opts, err := Build(cfg)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	if opts.Route == nil || len(opts.Route.Rules) == 0 {
+		t.Fatal("expected enabled custom rule in route rules")
+	}
+	if got := opts.Route.Rules[0].DefaultOptions.RuleAction.RouteOptions.Outbound; got != "n" {
+		t.Fatalf("first rule outbound = %q, want %q", got, "n")
+	}
+	for _, rule := range opts.Route.Rules {
+		raw := rule.DefaultOptions.RawDefaultRule
+		if len(raw.DomainSuffix) > 0 && raw.DomainSuffix[0] == "off.example.com" {
+			t.Fatalf("disabled rule leaked into route: %+v", rule)
+		}
 	}
 }

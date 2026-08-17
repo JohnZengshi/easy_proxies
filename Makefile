@@ -13,7 +13,6 @@ EXE := $(if $(filter windows,$(GOOS)),.exe,)
 BIN := runtime/easy_proxies$(EXE)
 PP_BIN := runtime/proxypool$(EXE)
 PP_DIR ?= $(abspath ../proxypool)
-MKDIR_P := mkdir -p
 
 DIST_DIR := dist/easy_proxies-$(VERSION)-$(GOOS)-$(GOARCH)
 ifeq ($(GOOS),windows)
@@ -30,7 +29,7 @@ RUN_SCRIPT := $(PWSH) -File runtime/proxy-chain.ps1
 RUN_DEPS := build
 RUN_LEGACY_DEPS := build proxypool
 PACKAGE_DEPS := all
-PACKAGE_CMD := python3 -m zipfile -c $(PACKAGE_ARCHIVE) $(DIST_DIR)
+PACKAGE_CMD := powershell -NoProfile -Command "Compress-Archive -Path '$(DIST_DIR)' -DestinationPath '$(PACKAGE_ARCHIVE)' -Force"
 else ifeq ($(GOOS),darwin)
 RUN_SCRIPT := ./runtime/proxy-chain-macos.sh
 RUN_DEPS := build
@@ -43,7 +42,17 @@ RUN_LEGACY_DEPS := build proxypool
 PACKAGE_DEPS := all proxypool
 endif
 
+ifeq ($(GOOS),windows)
+MKDIR_P := powershell -NoProfile -Command "New-Item -ItemType Directory -Force -Path"
+else
 MKDIR_P := mkdir -p
+endif
+
+ifeq ($(GOOS),windows)
+COPY := powershell -NoProfile -Command "Copy-Item -Force"
+else
+COPY := cp
+endif
 
 .PHONY: all build proxypool run run-legacy stop restart status test vet fmt package sync-ruleset clean
 
@@ -96,16 +105,19 @@ sync-ruleset:
 package: $(PACKAGE_DEPS)
 	@$(MKDIR_P) $(DIST_DIR)/runtime
 ifeq ($(GOOS),darwin)
-	cp $(BIN) $(DIST_DIR)/runtime/
-	cp runtime/config.yaml runtime/proxy-chain-macos.sh runtime/sync-vpncheap-subscription.sh $(DIST_DIR)/runtime/
+	$(COPY) $(BIN) $(DIST_DIR)/runtime/
+	$(COPY) runtime/config.yaml runtime/proxy-chain-macos.sh runtime/sync-vpncheap-subscription.sh $(DIST_DIR)/runtime/
 else ifeq ($(GOOS),windows)
-	cp $(BIN) $(DIST_DIR)/runtime/
-	cp runtime/config.yaml runtime/proxy-chain.ps1 runtime/sync-vpncheap-subscription.ps1 $(DIST_DIR)/runtime/
+	$(COPY) $(BIN) $(DIST_DIR)/runtime/
+	$(COPY) runtime/config.yaml $(DIST_DIR)/runtime/config.yaml
+	$(COPY) runtime/proxy-chain.ps1 $(DIST_DIR)/runtime/proxy-chain.ps1
+	$(COPY) runtime/sync-vpncheap-subscription.ps1 $(DIST_DIR)/runtime/sync-vpncheap-subscription.ps1
 else
-	cp $(BIN) $(PP_BIN) $(DIST_DIR)/runtime/
-	cp runtime/config.yaml runtime/proxypool-config.yaml runtime/proxy-chain.sh runtime/proxy-chain.ps1 runtime/sync-vpncheap-subscription.ps1 $(DIST_DIR)/runtime/
+	$(COPY) $(BIN) $(PP_BIN) $(DIST_DIR)/runtime/
+	$(COPY) runtime/config.yaml runtime/proxypool-config.yaml runtime/proxy-chain.sh runtime/proxy-chain.ps1 runtime/sync-vpncheap-subscription.ps1 $(DIST_DIR)/runtime/
 endif
-	cp README.md README_ZH.md $(DIST_DIR)/
+	$(COPY) README.md $(DIST_DIR)/README.md
+	$(COPY) README_ZH.md $(DIST_DIR)/README_ZH.md
 	$(PACKAGE_CMD)
 	@echo "package: $(PACKAGE_ARCHIVE)"
 

@@ -28,9 +28,9 @@ Easy Proxies 是一个基于 sing-box 的代理池管理工具。
 - 新增可配置 DNS 解析器（对 VMess 域名节点非常关键）。
 - 可选 GeoIP 标记（支持 JP/KR/US/HK/TW/SG 地域分区，可在 WebUI 中开关，支持自动更新和热重载）。
 - **可配置日志轮转**，支持大小限制、备份数量和压缩。
-- **域名分流规则**：WebUI 可配置指定域名走指定节点/地区池；内置开源规则集快照分类（OpenAI、Google、GitHub、Netflix 等），默认境内域名/IP 直连，其余走代理池，规则保存后热生效，无需重启。
+- **域名分流规则**：WebUI 可配置指定域名走指定节点/地区池；每条规则可单独启停，未命中流量可选直连或默认代理池；启用规则优先级高于境内直连和回退策略，规则保存后热生效，无需重启。
 - **域名延迟测速**：WebUI 对任意域名在所有健康节点上测 TTFB，卡片式展示结果并可一键把最优节点填入规则。
-- **系统代理开关**：macOS/Windows 可通过 WebUI 或 `--system-proxy` 切换 OS 级代理，退出/关闭时自动还原；默认关闭。
+- **系统代理**：Windows 启动时默认启用 PAC 系统代理，退出时自动还原 PAC 地址；macOS 仍通过 `--system-proxy` 显式开启。Windows 只接管 `AutoConfigURL`，不引入 TUN。
 
 ## 快速开始
 
@@ -264,6 +264,7 @@ dns:
 - `GET|POST|PUT|DELETE /api/nodes/config[...]`
 - `POST /api/reload`
 - `GET|POST /api/routing/rules`
+- `GET|PUT /api/routing/fallback`
 - `PUT|DELETE /api/routing/rules/{name}`
 - `GET /api/routing/presets`
 - `POST /api/routing/latency-test`（SSE）

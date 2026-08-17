@@ -69,9 +69,26 @@ type GeoIPConfig struct {
 // china-direct shortcut used when system proxy mode is enabled.
 type RoutingConfig struct {
 	Rules []RoutingRule `yaml:"rules"`
+	// Fallback controls traffic that matches no enabled custom rule. The
+	// accepted values are direct (bypass all proxies) and proxy-pool.
+	Fallback string `yaml:"fallback" json:"fallback,omitempty"`
 	// ChinaDirectEnabled defaults to true when unset. When enabled, domains
 	// from the embedded china ruleset bypass all proxy nodes.
 	ChinaDirectEnabled *bool `yaml:"china_direct_enabled,omitempty"`
+}
+
+const (
+	RoutingFallbackDirect    = "direct"
+	RoutingFallbackProxyPool = "proxy-pool"
+)
+
+// FallbackOrDefault reports the valid fallback mode, defaulting to direct for
+// legacy configurations that predate the field.
+func (r RoutingConfig) FallbackOrDefault() string {
+	if r.Fallback == "" {
+		return RoutingFallbackDirect
+	}
+	return r.Fallback
 }
 
 // ChinaDirect reports whether china-direct routing is enabled, using the
@@ -868,6 +885,14 @@ func (c *Config) normalizeRouting() error {
 	if c.Routing.ChinaDirectEnabled == nil {
 		defaultEnabled := true
 		c.Routing.ChinaDirectEnabled = &defaultEnabled
+	}
+	fallback := strings.TrimSpace(c.Routing.Fallback)
+	if fallback == "" {
+		c.Routing.Fallback = RoutingFallbackDirect
+	} else if fallback != RoutingFallbackDirect && fallback != RoutingFallbackProxyPool {
+		return fmt.Errorf("routing fallback %q is invalid (use %q or %q)", fallback, RoutingFallbackDirect, RoutingFallbackProxyPool)
+	} else {
+		c.Routing.Fallback = fallback
 	}
 	seenIDs := make(map[string]bool)
 	for i := range c.Routing.Rules {
