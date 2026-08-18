@@ -1942,7 +1942,11 @@ func (s *Server) handleSystemProxy(w http.ResponseWriter, r *http.Request) {
 		}
 		s.cfgMu.Lock()
 		s.sysActive = req.Enabled
+		s.cfgSrc.Management.SystemProxyEnabled = &req.Enabled
 		s.cfgMu.Unlock()
+		if err := s.cfgSrc.SaveSettings(); err != nil {
+			log.Printf("⚠️  failed to persist system proxy state: %v", err)
+		}
 		writeJSON(w, map[string]any{"enabled": req.Enabled, "message": "系统代理已生效"})
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)

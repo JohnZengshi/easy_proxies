@@ -171,11 +171,21 @@ type MultiPortConfig struct {
 
 // ManagementConfig controls the monitoring HTTP endpoint.
 type ManagementConfig struct {
-	Enabled          *bool  `yaml:"enabled"`
-	Listen           string `yaml:"listen"`
-	ProbeTarget      string `yaml:"probe_target"`
-	Password         string `yaml:"password"`          // WebUI 访问密码，为空则不需要密码
-	ProbeConcurrency int    `yaml:"probe_concurrency"` // 并发探测线程数（8-1024，默认 32），大规模节点可调高以加快探测
+	Enabled            *bool  `yaml:"enabled"`
+	Listen             string `yaml:"listen"`
+	ProbeTarget        string `yaml:"probe_target"`
+	Password           string `yaml:"password"`             // WebUI 访问密码，为空则不需要密码
+	ProbeConcurrency   int    `yaml:"probe_concurrency"`    // 并发探测线程数（8-1024，默认 32），大规模节点可调高以加快探测
+	SystemProxyEnabled *bool  `yaml:"system_proxy_enabled"` // 系统代理开关，nil 表示未显式配置
+}
+
+// SystemProxyEnabledOrDefault reports the configured system-proxy state. The
+// second return value reports whether the field was explicitly set.
+func (m ManagementConfig) SystemProxyEnabledOrDefault() (bool, bool) {
+	if m.SystemProxyEnabled == nil {
+		return false, false
+	}
+	return *m.SystemProxyEnabled, true
 }
 
 // SubscriptionRefreshConfig controls subscription auto-refresh and reload settings.

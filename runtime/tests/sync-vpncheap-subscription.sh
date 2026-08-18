@@ -49,6 +49,10 @@ expect_happy() {
     echo "FAIL: fresh config unexpectedly contains routing block"
     FAILED=1
   fi
+  if rg -q 'system_proxy_enabled' "$output"; then
+    echo "FAIL: fresh config unexpectedly contains system_proxy_enabled"
+    FAILED=1
+  fi
   if rg -q 'fixture-secret' "$TEMP/last-log"; then
     echo "FAIL: resolver output leaked subscription secret"
     FAILED=1
@@ -130,6 +134,24 @@ run_resolver "$TEMP/preserve_routing/app_state.plist" "$TEMP/preserve_routing/ea
 rg -q '^routing:' "$TEMP/preserve_routing/easy_proxies-config.yaml" || { echo "FAIL: routing block lost after regeneration"; FAILED=1; }
 rg -q 'openai.com' "$TEMP/preserve_routing/easy_proxies-config.yaml" || { echo "FAIL: routing rule content lost after regeneration"; FAILED=1; }
 rg -q 'preserve-secret' "$TEMP/last-log" && { echo "FAIL: preserve fixture leaked secret"; FAILED=1; }
+
+mkdir -p "$TEMP/preserve_system_proxy"
+cat >"$TEMP/preserve_system_proxy/easy_proxies-config.yaml" <<'EOF'
+mode: hybrid
+management:
+  listen: "127.0.0.1:9091"
+  probe_target: "http://cp.cloudflare.com/generate_204"
+  system_proxy_enabled: true
+nodes_file: nodes.txt
+routing:
+  fallback: proxy-pool
+EOF
+make_plist "$TEMP/preserve_system_proxy/app_state.plist" '{"xboard_subscription":"{\"value\":{\"subscribe_url\":\"https://example.test/subscribe?token=proxy-secret\"}}"}'
+run_resolver "$TEMP/preserve_system_proxy/app_state.plist" "$TEMP/preserve_system_proxy/easy_proxies-config.yaml"
+[ "$(cat "$TEMP/last-code")" = "0" ] || { echo "FAIL: system proxy preserve resolver failed"; FAILED=1; }
+rg -q 'system_proxy_enabled: true' "$TEMP/preserve_system_proxy/easy_proxies-config.yaml" || { echo "FAIL: system_proxy_enabled lost after regeneration"; FAILED=1; }
+rg -q '^  system_proxy_enabled: true$' "$TEMP/preserve_system_proxy/easy_proxies-config.yaml" || { echo "FAIL: system_proxy_enabled has wrong indentation"; FAILED=1; }
+rg -q 'proxy-secret' "$TEMP/last-log" && { echo "FAIL: system proxy fixture leaked secret"; FAILED=1; }
 
 if [ "$FAILED" = "0" ]; then
   echo "sync-vpncheap-subscription tests passed"

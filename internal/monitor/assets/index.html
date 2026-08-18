@@ -757,6 +757,10 @@
                 <div class="form-group"><label>访问密码</label><input type="password" id="settingMgmtPassword" class="setting-input" /></div>
                 <div class="form-group"><label>探测并发数</label><input type="number" id="settingProbeConcurrency" class="setting-input" min="1" max="1024" placeholder="32" /></div>
               </div>
+              <div class="checkbox-row" id="settingSystemProxyRow" style="display:none; padding: 0 16px 12px;">
+                <input type="checkbox" id="settingSystemProxy" onchange="toggleSystemProxy(this)" />
+                <label for="settingSystemProxy">启用系统代理（macOS/Windows，重启后保留）</label>
+              </div>
               <div style="font-size: 11px; color: var(--text-muted); padding: 0 16px 12px;">探测并发数：初始/周期健康检查与批量探测的并发线程数（8-1024，默认 32），节点数多时调高可加快探测，修改后需重载核心生效</div>
             </div>
 
@@ -1944,6 +1948,7 @@
         } catch(e){}
         // Take core snapshot after all fields are populated
         _savedCoreSnapshot = _buildCoreSnapshot();
+        loadSystemProxy();
       } catch(e){ console.error('Failed to load settings:', e); }
     }
     function _buildCoreSnapshot() {
@@ -1984,6 +1989,36 @@
     function toggleLogFileSettings() {
       const output = document.getElementById('settingLogOutput').value;
       document.getElementById('logFileSettings').style.display = output === 'file' ? 'grid' : 'none';
+    }
+
+    async function loadSystemProxy() {
+      try {
+        const r = await fetch('/api/system-proxy');
+        const d = await r.json();
+        const row = document.getElementById('settingSystemProxyRow');
+        if (!row) return;
+        row.style.display = d.supported ? 'flex' : 'none';
+        if (d.supported) {
+          document.getElementById('settingSystemProxy').checked = !!d.enabled;
+        }
+      } catch(e) {}
+    }
+
+    async function toggleSystemProxy(input) {
+      const enabled = input.checked;
+      try {
+        const r = await fetch('/api/system-proxy', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled})});
+        const d = await r.json();
+        if (!r.ok) {
+          input.checked = !enabled;
+          showToast(d.error || '系统代理设置失败', 'error');
+          return;
+        }
+        showToast(d.message || '系统代理设置已保存');
+      } catch(e) {
+        input.checked = !enabled;
+        showToast('系统代理设置失败', 'error');
+      }
     }
 
     async function handleSettingsSave(e) {

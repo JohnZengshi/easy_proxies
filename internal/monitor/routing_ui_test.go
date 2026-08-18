@@ -44,3 +44,20 @@ func TestRoutingUIHasNoSystemProxyToggle(t *testing.T) {
 		}
 	}
 }
+
+func TestRoutingUIHasSystemProxyControl(t *testing.T) {
+	data, err := embeddedFS.ReadFile("assets/index.html")
+	if err != nil {
+		t.Fatalf("read embedded index: %v", err)
+	}
+	html := string(data)
+	for _, want := range []string{
+		`id="settingSystemProxy"`,
+		`toggleSystemProxy(this)`,
+		`fetch('/api/system-proxy')`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("embedded UI missing %q", want)
+		}
+	}
+}

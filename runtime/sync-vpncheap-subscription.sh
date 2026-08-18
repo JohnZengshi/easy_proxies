@@ -47,11 +47,20 @@ mkdir -p "$OUT_DIR"
 [ -e "$OUTPUT_PATH" ] && [ ! -f "$OUTPUT_PATH" ] && die "output config path is not a file"
 
 EXISTING_ROUTING=""
+EXISTING_SYSTEM_PROXY=""
 if [ -f "$OUTPUT_PATH" ]; then
   EXISTING_ROUTING="$(awk '
     /^routing:/ { flag=1; print; next }
     flag && /^[A-Za-z_][A-Za-z0-9_-]*:/ { flag=0 }
     flag { print }
+  ' "$OUTPUT_PATH")"
+  EXISTING_SYSTEM_PROXY="$(awk '
+    /^management:/ { flag=1; next }
+    flag && /^[A-Za-z_][A-Za-z0-9_-]*:/ { flag=0 }
+    flag && /^[[:space:]]+system_proxy_enabled:/ {
+      sub(/^[[:space:]]+system_proxy_enabled:/, "  system_proxy_enabled:")
+      print
+    }
   ' "$OUTPUT_PATH")"
 fi
 
@@ -95,6 +104,13 @@ printf '%s\n' \
   'management:' \
   '  listen: "127.0.0.1:9091"' \
   '  probe_target: "http://cp.cloudflare.com/generate_204"' \
+  > "$TMP_OUT"
+
+if [ -n "$EXISTING_SYSTEM_PROXY" ]; then
+  printf '%s\n' "$EXISTING_SYSTEM_PROXY" >> "$TMP_OUT"
+fi
+
+printf '%s\n' \
   '' \
   'nodes_file: nodes.txt' \
   '' \
@@ -109,7 +125,7 @@ printf '%s\n' \
   '  health_check_timeout: 60s' \
   '  drain_timeout: 30s' \
   '  min_available_nodes: 1' \
-  > "$TMP_OUT"
+  >> "$TMP_OUT"
 
 if [ -n "$EXISTING_ROUTING" ]; then
   printf '\n%s\n' "$EXISTING_ROUTING" >> "$TMP_OUT"

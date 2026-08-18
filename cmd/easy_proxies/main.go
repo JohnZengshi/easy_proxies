@@ -24,6 +24,12 @@ func main() {
 	flag.StringVar(&configPath, "config", "config.yaml", "path to config file")
 	flag.BoolVar(&systemProxy, "system-proxy", defaultSystemProxy(), "enable OS-level system proxy for macOS/Windows")
 	flag.Parse()
+	systemProxyExplicit := false
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "system-proxy" {
+			systemProxyExplicit = true
+		}
+	})
 
 	var cfg *config.Config
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -46,10 +52,21 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	if err := app.Run(ctx, cfg, systemProxy); err != nil {
+	effectiveSystemProxy := resolveSystemProxyEnabled(systemProxyExplicit, systemProxy, cfg.Management)
+	if err := app.Run(ctx, cfg, effectiveSystemProxy); err != nil {
 		fmt.Fprintf(os.Stderr, "proxy pool exited with error: %v\n", err)
 		os.Exit(1)
 	}
+}
+
+func resolveSystemProxyEnabled(flagExplicit, flagValue bool, mgmt config.ManagementConfig) bool {
+	if flagExplicit {
+		return flagValue
+	}
+	if value, present := mgmt.SystemProxyEnabledOrDefault(); present {
+		return value
+	}
+	return flagValue
 }
 
 func setupLogging(cfg *config.Config) {
