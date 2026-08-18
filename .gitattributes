@@ -1,0 +1,13 @@
+# Default: normalize all text files to LF regardless of platform autocrlf
+# settings, so a Windows checkout never produces CRLF diffs or broken
+# shebangs on macOS/Linux.
+* text=auto eol=lf
+
+# Shell scripts must stay LF regardless of platform autocrlf settings,
+# otherwise CRLF checkout on Windows breaks the shebang on macOS/Linux.
+*.sh text eol=lf
+
+# Windows-only scripts stay CRLF for native tooling (PowerShell/cmd).
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
