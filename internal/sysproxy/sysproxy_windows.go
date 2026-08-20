@@ -65,6 +65,35 @@ func (p *windowsProxy) Disable() error {
 	return err
 }
 
+func (p *windowsProxy) CleanupStale(pacURL, proxyAddress string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.enabled {
+		return nil
+	}
+	changed := false
+	if server := regRead("ProxyServer"); server.exists && server.value == proxyServerValue(proxyAddress) {
+		if err := regDelete("ProxyServer"); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if pac := regRead("AutoConfigURL"); pac.exists && (pac.value == pacURL || pac.value == proxyAddress) {
+		if err := regDelete("AutoConfigURL"); err != nil {
+			return err
+		}
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	if err := regDelete("ProxyEnable"); err != nil {
+		return err
+	}
+	notifyInternetSettingsChanged()
+	return nil
+}
+
 func (p *windowsProxy) restoreLocked() error {
 	var firstErr error
 	for _, item := range []struct {

@@ -39,18 +39,22 @@ func Run(ctx context.Context, cfg *config.Config, systemProxy bool) error {
 
 	// Create and start BoxManager
 	boxMgr := boxmgr.New(cfg, monitorCfg)
+	sysProxy := sysproxy.New()
+	target := sysproxy.SystemProxyTarget(cfg.Management.Listen, cfg.Listener.Address, cfg.Listener.Port)
+	localProxy := sysproxy.LocalProxyAddress(cfg.Listener.Address, cfg.Listener.Port)
+	if err := sysProxy.CleanupStale(sysproxy.PACURL(cfg.Management.Listen), localProxy); err != nil {
+		log.Printf("⚠️  failed to clean stale system proxy: %v", err)
+	}
 	if err := boxMgr.Start(ctx); err != nil {
 		return fmt.Errorf("start box manager: %w", err)
 	}
 	defer boxMgr.Close()
 
-	sysProxy := sysproxy.New()
 	if server := boxMgr.MonitorServer(); server != nil {
 		server.SetConfig(cfg)
 		server.SetSysProxy(sysProxy)
 	}
 	if systemProxy {
-		target := sysproxy.SystemProxyTarget(cfg.Management.Listen, cfg.Listener.Address, cfg.Listener.Port)
 		if err := sysProxy.Enable(target); err != nil {
 			log.Printf("⚠️  failed to enable system proxy: %v", err)
 		} else {

@@ -27,6 +27,10 @@ func (p *systemProxyStub) Disable() error {
 	return nil
 }
 
+func (p *systemProxyStub) CleanupStale(string, string) error {
+	return nil
+}
+
 func TestHandleSystemProxyPersist(t *testing.T) {
 	if !sysproxy.Supported() {
 		t.Skip("system proxy is only supported on darwin and windows")

@@ -31,6 +31,13 @@ func SystemProxyTarget(managementListen, listenerAddress string, listenerPort ui
 	if runtime.GOOS != "windows" {
 		return PACURL(managementListen)
 	}
+	return LocalProxyAddress(listenerAddress, listenerPort)
+}
+
+// LocalProxyAddress returns the host:port clients use for the mixed listener.
+// Older releases wrote this value into the OS web/socks proxy fields, so
+// cleanup must still recognize it.
+func LocalProxyAddress(listenerAddress string, listenerPort uint16) string {
 	host := listenerAddress
 	if host == "" || host == "0.0.0.0" || host == "::" {
 		host = "127.0.0.1"
@@ -42,6 +49,10 @@ func SystemProxyTarget(managementListen, listenerAddress string, listenerPort ui
 type Proxy interface {
 	Enable(target string) error
 	Disable() error
+	// CleanupStale clears proxy settings left behind by a previous process when
+	// they still point at this project's PAC endpoint or local listener. It is a
+	// no-op when the current process already owns the proxy state.
+	CleanupStale(pacURL, proxyAddress string) error
 }
 
 // Supported reports whether the current platform has an implementation.
@@ -57,8 +68,9 @@ func New() Proxy {
 
 type noopProxy struct{}
 
-func (noopProxy) Enable(string) error { return nil }
-func (noopProxy) Disable() error      { return nil }
+func (noopProxy) Enable(string) error               { return nil }
+func (noopProxy) Disable() error                    { return nil }
+func (noopProxy) CleanupStale(string, string) error { return nil }
 
 type baseProxy struct {
 	mu      sync.Mutex

@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Removed `start.sh` and `diagnose.sh` helper scripts; `docker compose up -d` (with a directory mount) is now the documented path. README/docs updated to inline the equivalent checks
 
 ### Fixed
+- **系统代理残留导致重启后断网**: macOS/Windows 启动 `easy_proxies` 时先清理指向本项目旧 PAC/代理端口的系统设置，避免上一次进程离开后系统仍把流量发给已停止的本地代理
 - **Error messages now match actual mount configuration**: entrypoint.sh error messages previously hardcoded `./data/` paths, causing confusion when using file-mount mode (`-v ./nodes.txt:/etc/easy_proxies/nodes.txt`). Now displays correct fix instructions for both directory-mount and file-mount configurations
 
 ### Fixed
