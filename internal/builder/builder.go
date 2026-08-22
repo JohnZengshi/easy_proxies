@@ -446,11 +446,23 @@ func Build(cfg *config.Config) (option.Options, error) {
 		Route:     &route,
 		Experimental: &option.ExperimentalOptions{
 			ClashAPI: &option.ClashAPIOptions{
-				ExternalController: "127.0.0.1:9092",
+				ExternalController: clashAPIListen(cfg),
 			},
 		},
 	}
 	return opts, nil
+}
+
+// clashAPIListen picks the embedded Clash API bind address. The production
+// default is 127.0.0.1:9092; cfg.Experimental.ClashAPIPort overrides it for
+// the boxmgr test suite so tests can run alongside a live instance without
+// colliding on 9092.
+func clashAPIListen(cfg *config.Config) string {
+	port := cfg.Experimental.ClashAPIPort
+	if port <= 0 {
+		port = 9092
+	}
+	return fmt.Sprintf("127.0.0.1:%d", port)
 }
 
 func buildPoolInbound(cfg *config.Config) (option.Inbound, error) {

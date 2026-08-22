@@ -57,6 +57,12 @@ func WithLogger(l Logger) Option {
 type Manager struct {
 	mu sync.RWMutex
 
+	// reloadMu serializes Reload so concurrent callers do not observe
+	// currentBox=nil (the "reloading" marker) and incorrectly return
+	// "manager not started". Acquiring it at the top of Reload prevents the
+	// race where a second TriggerReload lands while the first is mid-rebuild.
+	reloadMu sync.Mutex
+
 	currentBox    *box.Box
 	monitorMgr    *monitor.Manager
 	monitorServer *monitor.Server
@@ -187,8 +193,13 @@ func (m *Manager) Reload(newCfg *config.Config) error {
 		return errors.New("new config is nil")
 	}
 
+	// Serialize reloads so a concurrent caller does not land in the
+	// currentBox=nil "reloading" window and return "manager not started".
+	m.reloadMu.Lock()
+	defer m.reloadMu.Unlock()
+
 	m.mu.Lock()
-	if m.currentBox == nil {
+	if m.baseCtx == nil {
 		m.mu.Unlock()
 		return errors.New("manager not started")
 	}

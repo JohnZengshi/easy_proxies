@@ -41,8 +41,18 @@ type Config struct {
 	ExternalIP          string                    `yaml:"external_ip"`   // 外部 IP 地址，用于导出时替换 0.0.0.0
 	LogLevel            string                    `yaml:"log_level"`
 	SkipCertVerify      bool                      `yaml:"skip_cert_verify"` // 全局跳过 SSL 证书验证
+	Experimental        ExperimentalConfig        `yaml:"experimental"`
 
 	filePath string `yaml:"-"` // 配置文件路径，用于保存
+}
+
+// ExperimentalConfig holds opt-in experimental tunables. Empty values fall
+// back to builder defaults so production behavior is unchanged unless
+// explicitly set. Today only the embedded Clash API bind port is exposed;
+// the field exists primarily so tests can pick an ephemeral port and avoid
+// colliding with a live easy_proxies instance bound to 9092.
+type ExperimentalConfig struct {
+	ClashAPIPort int `yaml:"clash_api_port"` // 0 = builder default (9092)
 }
 
 // LogConfig controls log output and rotation.
