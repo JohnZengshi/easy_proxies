@@ -122,6 +122,57 @@ invoke restart
 [ "$(cat "$TEMP/last-code")" = "0" ] || { echo "FAIL: restart failed"; FAILED=1; }
 invoke stop
 
+cat >"$TEMP/bin/slow-stop-easy" <<'SH'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$FAKE_EASY_ARGS"
+python3 - <<'PY' &
+import os
+from http.server import BaseHTTPRequestHandler, HTTPServer
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header("Content-Length", "2")
+        self.end_headers()
+        self.wfile.write(b"ok")
+    def log_message(self, *args):
+        pass
+HTTPServer(("127.0.0.1", int(os.environ["FAKE_EASY_PORT"])), H).serve_forever()
+PY
+child=$!
+trap 'sleep 2; kill "$child" 2>/dev/null || true; exit 0' TERM
+wait "$child"
+SH
+chmod +x "$TEMP/bin/slow-stop-easy"
+
+rm -f "$TEMP/easy_proxies.pid" "$TEMP/fake-easy-args"
+EASY_PROXIES_BIN="$TEMP/bin/slow-stop-easy" \
+EASY_PROXIES_CONFIG="$TEMP/easy_proxies-config.yaml" \
+EASY_PROXIES_PID="$TEMP/easy_proxies.pid" \
+EASY_PROXIES_LOG="$TEMP/easy_proxies.log" \
+EASY_PROXIES_ERR_LOG="$TEMP/easy_proxies.err.log" \
+FAKE_EASY_ARGS="$TEMP/fake-easy-args" \
+FAKE_EASY_PORT="$web_port" \
+VPNCHEAP_RESOLVER="$TEMP/bin/fake-resolver" \
+VPNCHEAP_STATE_PATH="$TEMP/state.plist" \
+WEBUI_PORT="$web_port" \
+SKIP_READY=0 \
+"$SCRIPT" start >"$TEMP/slow-stop-start.out" 2>&1
+slow_stop_pid="$(cat "$TEMP/easy_proxies.pid")"
+EASY_PROXIES_BIN="$TEMP/bin/slow-stop-easy" \
+EASY_PROXIES_CONFIG="$TEMP/easy_proxies-config.yaml" \
+EASY_PROXIES_PID="$TEMP/easy_proxies.pid" \
+EASY_PROXIES_LOG="$TEMP/easy_proxies.log" \
+EASY_PROXIES_ERR_LOG="$TEMP/easy_proxies.err.log" \
+FAKE_EASY_ARGS="$TEMP/fake-easy-args" \
+FAKE_EASY_PORT="$web_port" \
+VPNCHEAP_RESOLVER="$TEMP/bin/fake-resolver" \
+VPNCHEAP_STATE_PATH="$TEMP/state.plist" \
+WEBUI_PORT="$web_port" \
+SKIP_READY=0 \
+"$SCRIPT" stop >"$TEMP/slow-stop-stop.out" 2>&1
+kill -0 "$slow_stop_pid" 2>/dev/null && { echo "FAIL: slow-stop easy_proxies still running after stop"; FAILED=1; }
+[ ! -f "$TEMP/easy_proxies.pid" ] || { echo "FAIL: stale pid file remained after slow stop"; FAILED=1; }
+
 rm -f "$TEMP/easy_proxies-config.yaml" "$TEMP/fake-easy-args"
 RESOLVER="$TEMP/bin/fail-resolver"
 invoke start

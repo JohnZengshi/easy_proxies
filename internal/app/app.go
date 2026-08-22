@@ -42,8 +42,13 @@ func Run(ctx context.Context, cfg *config.Config, systemProxy bool) error {
 	sysProxy := sysproxy.New()
 	target := sysproxy.SystemProxyTarget(cfg.Management.Listen, cfg.Listener.Address, cfg.Listener.Port)
 	localProxy := sysproxy.LocalProxyAddress(cfg.Listener.Address, cfg.Listener.Port)
-	if err := sysProxy.CleanupStale(sysproxy.PACURL(cfg.Management.Listen), localProxy); err != nil {
-		log.Printf("⚠️  failed to clean stale system proxy: %v", err)
+	if !systemProxy {
+		// Only remove stale OS proxy state when this process will not take over
+		// the PAC. Cleaning before startup can disable a live PAC when another
+		// process still owns the listener and this process fails to bind.
+		if err := sysProxy.CleanupStale(sysproxy.PACURL(cfg.Management.Listen), localProxy); err != nil {
+			log.Printf("⚠️  failed to clean stale system proxy: %v", err)
+		}
 	}
 	if err := boxMgr.Start(ctx); err != nil {
 		return fmt.Errorf("start box manager: %w", err)

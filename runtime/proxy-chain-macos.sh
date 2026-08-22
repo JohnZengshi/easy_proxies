@@ -46,9 +46,12 @@ start_easy_proxies() {
 
   local i
   for i in $(seq 1 20); do
-    if easy_ready; then
+    if easy_ready && pid_alive "$EP_PID"; then
       log "easy_proxies ready on $WEBUI_PORT"
       return 0
+    fi
+    if ! pid_alive "$EP_PID"; then
+      break
     fi
     sleep 2
   done
@@ -66,9 +69,21 @@ stop_easy_proxies() {
     local pid
     pid="$(cat "$EP_PID")"
     kill "$pid" 2>/dev/null || true
-    sleep 1
+    log "waiting for easy_proxies to stop"
+    local i
+    for i in $(seq 1 30); do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        rm -f -- "$EP_PID"
+        log "stopped easy_proxies"
+        return 0
+      fi
+      sleep 1
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+      log "easy_proxies did not stop within 30s"
+      return 1
+    fi
     rm -f -- "$EP_PID"
-    log "stopped easy_proxies"
   else
     rm -f -- "$EP_PID"
   fi
